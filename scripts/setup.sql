@@ -57,9 +57,9 @@ GRANT USAGE ON INTEGRATION allow_all_integration TO ROLE PCB_DEFECT_DETECTION_RO
 -- Create API integration with GitHub
 CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB
     API_PROVIDER = git_https_api
-    API_ALLOWED_PREFIXES = ('https://github.com/Snowflake-Labs/')
+    API_ALLOWED_PREFIXES = ('https://github.com/')
     ENABLED = TRUE
-    COMMENT = 'Git integration with Snowflake Labs GitHub Repository.';
+    COMMENT = 'Git integration with GitHub Repository.';
 
 -- Create the integration with the GitHub repository
 CREATE OR REPLACE GIT REPOSITORY PCB_GITHUB_REPO
