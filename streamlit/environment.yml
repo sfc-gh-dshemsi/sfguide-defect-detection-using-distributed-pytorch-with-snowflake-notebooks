@@ -2,7 +2,10 @@ name: app_environment
 channels:
   - snowflake
 dependencies:
-  - matplotlib=3.7.2
-  - python=3.9.*
-  - snowflake-ml-python=1.6.2
+  - python=3.10
+  - snowflake-ml-python
   - snowflake-snowpark-python
+  - matplotlib
+  - pandas
+  - pillow
+  - numpy

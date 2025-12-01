@@ -1,8 +1,7 @@
 import streamlit as st
+from snowflake.snowpark.context import get_active_session
 import snowflake.snowpark.functions as F
 import json
-import sys
-sys.path.insert(0, '..')
 from page_helper import get_image
 import altair as alt
 import pandas as pd
@@ -12,7 +11,7 @@ import io
 from io import BytesIO
 from PIL import Image
 
-session = st.session_state['snf_session']
+session = get_active_session()
 
 connection_parameters = {
     "account": session.get_current_account(),    
