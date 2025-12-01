@@ -1,0 +1,138 @@
+/*
+ * Setup Script for PCB Defect Detection Quickstart
+ * Distributed PyTorch Model Training in Snowflake Notebooks
+ * 
+ * This script creates all necessary Snowflake objects for the quickstart.
+ */
+
+USE ROLE ACCOUNTADMIN;
+
+SET USERNAME = (SELECT CURRENT_USER());
+SELECT $USERNAME;
+
+-- Create a new role for this exercise and grant to applicable users
+CREATE ROLE IF NOT EXISTS PCB_DEFECT_DETECTION_ROLE;
+GRANT ROLE PCB_DEFECT_DETECTION_ROLE TO USER identifier($USERNAME);
+
+GRANT CREATE DATABASE ON ACCOUNT TO ROLE PCB_DEFECT_DETECTION_ROLE;
+GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO ROLE PCB_DEFECT_DETECTION_ROLE;
+GRANT CREATE ROLE ON ACCOUNT TO ROLE PCB_DEFECT_DETECTION_ROLE;
+GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE PCB_DEFECT_DETECTION_ROLE;
+GRANT MANAGE GRANTS ON ACCOUNT TO ROLE PCB_DEFECT_DETECTION_ROLE;
+GRANT CREATE INTEGRATION ON ACCOUNT TO ROLE PCB_DEFECT_DETECTION_ROLE;
+GRANT CREATE COMPUTE POOL ON ACCOUNT TO ROLE PCB_DEFECT_DETECTION_ROLE;
+
+USE ROLE PCB_DEFECT_DETECTION_ROLE;
+
+-- Create warehouse, database, and schema
+CREATE WAREHOUSE IF NOT EXISTS PCB_WH; -- default XS Standard Warehouse
+CREATE DATABASE IF NOT EXISTS PCB_DATASET;
+CREATE SCHEMA IF NOT EXISTS PCB_SCHEMA;
+
+USE DATABASE PCB_DATASET;
+USE SCHEMA PCB_SCHEMA;
+
+-- Create stage for data storage
+CREATE STAGE IF NOT EXISTS DATA_STAGE;
+
+-- Create compute pool for GPU-based notebook execution
+CREATE COMPUTE POOL IF NOT EXISTS PCB_GPU_POOL 
+    MIN_NODES = 1 
+    MAX_NODES = 2
+    INSTANCE_FAMILY = GPU_NV_S 
+    AUTO_SUSPEND_SECS = 7200;
+
+-- Create network rule to allow external access from Notebook
+CREATE OR REPLACE NETWORK RULE allow_all_rule
+    TYPE = 'HOST_PORT'
+    MODE = 'EGRESS'
+    VALUE_LIST = ('0.0.0.0:443', '0.0.0.0:80');
+
+CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION allow_all_integration
+    ALLOWED_NETWORK_RULES = (allow_all_rule)
+    ENABLED = TRUE;
+
+GRANT USAGE ON INTEGRATION allow_all_integration TO ROLE PCB_DEFECT_DETECTION_ROLE;
+
+-- Create API integration with GitHub
+CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB
+    API_PROVIDER = git_https_api
+    API_ALLOWED_PREFIXES = ('https://github.com/Snowflake-Labs/')
+    ENABLED = TRUE
+    COMMENT = 'Git integration with Snowflake Labs GitHub Repository.';
+
+-- Create the integration with the GitHub repository
+CREATE OR REPLACE GIT REPOSITORY PCB_GITHUB_REPO
+    ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-defect-detection-using-distributed-pytorch-with-snowflake-notebooks.git'
+    API_INTEGRATION = 'GITHUB_INTEGRATION_PCB'
+    COMMENT = 'PCB Defect Detection GitHub Repository';
+
+-- Fetch most recent files from GitHub repository
+ALTER GIT REPOSITORY PCB_GITHUB_REPO FETCH;
+
+-- Create tables for storing image and label data
+CREATE TABLE IF NOT EXISTS LABELS_TRAIN (
+    filename VARCHAR,
+    xmin FLOAT,
+    ymin FLOAT,
+    xmax FLOAT,
+    ymax FLOAT,
+    class INT
+);
+
+CREATE TABLE IF NOT EXISTS TRAIN_IMAGES_LABELS (
+    Filename VARCHAR,
+    image_data VARCHAR,
+    class INT,
+    xmin FLOAT,
+    ymin FLOAT,
+    xmax FLOAT,
+    ymax FLOAT
+);
+
+CREATE TABLE IF NOT EXISTS IMAGES_LANDING (
+    IMAGE_NAME VARCHAR,
+    BASE64BYTES VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS DETECTION_OUTPUTS (
+    image_data VARCHAR(16777216),
+    output VARCHAR(16777216),
+    label NUMBER(38,0),
+    box VARIANT,
+    score FLOAT
+);
+
+-- Copy notebooks into Snowflake & configure runtime settings
+CREATE OR REPLACE NOTEBOOK PCB_DATASET.PCB_SCHEMA.DATA_PREPARATION
+    FROM '@PCB_DATASET.PCB_SCHEMA.PCB_GITHUB_REPO/branches/main'
+    MAIN_FILE = 'notebooks/0_data_preparation.ipynb'
+    QUERY_WAREHOUSE = PCB_WH
+    RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME'
+    COMPUTE_POOL = 'SYSTEM_COMPUTE_POOL_CPU'
+    IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600;
+
+ALTER NOTEBOOK PCB_DATASET.PCB_SCHEMA.DATA_PREPARATION ADD LIVE VERSION FROM LAST;
+ALTER NOTEBOOK PCB_DATASET.PCB_SCHEMA.DATA_PREPARATION SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
+
+CREATE OR REPLACE NOTEBOOK PCB_DATASET.PCB_SCHEMA.DISTRIBUTED_MODEL_TRAINING
+    FROM '@PCB_DATASET.PCB_SCHEMA.PCB_GITHUB_REPO/branches/main'
+    MAIN_FILE = 'notebooks/1_Distributed_Model_Training_Snowflake_Notebooks.ipynb'
+    QUERY_WAREHOUSE = PCB_WH
+    RUNTIME_NAME = 'SYSTEM$GPU_RUNTIME'
+    COMPUTE_POOL = 'PCB_GPU_POOL'
+    IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600;
+
+ALTER NOTEBOOK PCB_DATASET.PCB_SCHEMA.DISTRIBUTED_MODEL_TRAINING ADD LIVE VERSION FROM LAST;
+ALTER NOTEBOOK PCB_DATASET.PCB_SCHEMA.DISTRIBUTED_MODEL_TRAINING SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
+
+-- Create Streamlit app
+CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
+    FROM '@PCB_DATASET.PCB_SCHEMA.PCB_GITHUB_REPO/branches/main/streamlit/'
+    MAIN_FILE = 'streamlit_app.py'
+    QUERY_WAREHOUSE = 'PCB_WH'
+    TITLE = 'PCB Defect Detection'
+    COMMENT = '{"origin":"sf_sit-is", "name":"distributed_ml_crt_imageanomaly_detection", "version":{"major":1, "minor":0}, "attributes":{"is_quickstart":1, "source":"streamlit"}}';
+
+ALTER STREAMLIT PCB_DEFECT_DETECTION_APP ADD LIVE VERSION FROM LAST;
+

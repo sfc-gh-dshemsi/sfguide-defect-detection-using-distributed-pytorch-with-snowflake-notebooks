@@ -1,6 +1,8 @@
 import streamlit as st
 import snowflake.snowpark.functions as F
 import json
+import sys
+sys.path.insert(0, '..')
 from page_helper import get_image
 import altair as alt
 import pandas as pd
@@ -21,11 +23,11 @@ connection_parameters = {
 } 
 st.write(connection_parameters)
 
-st.image(get_image("logo-sno-blue.png"), width=100)
+st.image(get_image("assets/snowflakelogo/logo-sno-blue.png"), width=100)
 st.title(":blue[Manufacturing - PCB Defect Detection and Classification - Setup]")
 
 st.markdown("---")
-image_filename = 'pcb.png'
+image_filename = 'assets/pcb.png'
 mime_type = image_filename.split('.')[-1:][0].lower()        
 with open(image_filename, "rb") as f:
     content_bytes = f.read()

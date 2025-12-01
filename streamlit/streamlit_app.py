@@ -24,11 +24,11 @@ session = get_active_session()
 # Configure Streamlit layout
 st.set_page_config(layout="wide")
 
-st.image(get_image("snowflakelogo/logo-sno-blue.png"), width=100)
+st.image(get_image("assets/snowflakelogo/logo-sno-blue.png"), width=100)
 st.title(":blue[Computer Vision based Defect Detection and Classification]")
 st.markdown("---")
 
-image_filename = 'pcb.png'
+image_filename = 'assets/pcb.png'
 
 # Create table for image landing in Snowflake 
 session.sql(f"""
@@ -49,7 +49,7 @@ st.image(image_string, width=500)
 # Ensure the session state exists
 if 'images_loaded' not in st.session_state:
     parent_directory = os.getcwd()
-    zip_file_path = os.path.join(parent_directory, "detect.zip")
+    zip_file_path = os.path.join(parent_directory, "assets", "detect.zip")
     extracted = os.path.join(parent_directory, "detect")
 
     class FileLock:
