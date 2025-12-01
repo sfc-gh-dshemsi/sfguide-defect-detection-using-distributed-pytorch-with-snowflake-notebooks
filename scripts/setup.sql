@@ -50,8 +50,8 @@ CREATE STAGE IF NOT EXISTS DATA_STAGE;
 
 -- Create compute pool for GPU-based notebook execution
 CREATE COMPUTE POOL IF NOT EXISTS PCB_GPU_POOL 
-    MIN_NODES = 1 
-    MAX_NODES = 2
+    MIN_NODES = 5
+    MAX_NODES = 5
     INSTANCE_FAMILY = GPU_NV_S 
     AUTO_SUSPEND_SECS = 7200;
 
