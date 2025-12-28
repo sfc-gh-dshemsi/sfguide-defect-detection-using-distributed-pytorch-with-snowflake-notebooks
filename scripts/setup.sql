@@ -14,7 +14,7 @@ SELECT $USERNAME;
 -- 1. Create Role and Grant Account-Level Permissions
 -- ============================================================================
 CREATE OR REPLACE ROLE PCB_CV_ROLE;
-GRANT ROLE PCB_CV_ROLE TO USER identifier($USERNAME);
+GRANT ROLE PCB_CV_ROLE to USER identifier($USERNAME);
 
 GRANT CREATE DATABASE ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE PCB_CV_ROLE;
@@ -37,24 +37,14 @@ CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION allow_all_integration
 GRANT USAGE ON INTEGRATION allow_all_integration TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 3. Git Integration Setup
--- =========================================================================
-
-CREATE OR REPLACE SECRET PCB_CV.PUBLIC.GITHUB_SECRET
-    TYPE = PASSWORD
-    USERNAME = 'your_github_username'  -- UPDATE THIS
-    PASSWORD = 'your_github_pat'       -- UPDATE THIS: GitHub Personal Access Token
-    COMMENT = 'GitHub PAT for accessing PCB CV demo repository';
-
--- Create API integration for Git
+-- 3. Create API Integration for Git
+-- ============================================================================
 CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB_CV
     API_PROVIDER = git_https_api
     API_ALLOWED_PREFIXES = ('https://github.com/')
-    ALLOWED_AUTHENTICATION_SECRETS = (PCB_CV.PUBLIC.GITHUB_SECRET)
     ENABLED = TRUE
     COMMENT = 'Git integration with GitHub for PCB CV repository';
 
--- Grant integration usage
 GRANT USAGE ON INTEGRATION GITHUB_INTEGRATION_PCB_CV TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
@@ -80,19 +70,17 @@ USE WAREHOUSE PCB_CV_WH;
 -- ============================================================================
 -- 5. Create Git Repository
 -- ============================================================================
-CREATE OR REPLACE GIT REPOSITORY PCB_CV.PUBLIC.PCB_CV_REPO
-    API_INTEGRATION = GITHUB_INTEGRATION_PCB_CV
-    GIT_CREDENTIALS = PCB_CV.PUBLIC.GITHUB_SECRET
+CREATE OR REPLACE GIT REPOSITORY PCB_CV_REPO
     ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-defect-detection-using-distributed-pytorch-with-snowflake-notebooks.git'
+    API_INTEGRATION = GITHUB_INTEGRATION_PCB_CV
     COMMENT = 'Git repository for PCB Defect Detection demo';
 
 -- Fetch latest code from Git
-ALTER GIT REPOSITORY PCB_CV.PUBLIC.PCB_CV_REPO FETCH;
+ALTER GIT REPOSITORY PCB_CV_REPO FETCH;
 
 -- ============================================================================
 -- 6. Create Stages
 -- ============================================================================
--- Stage for PCB images and labels
 CREATE OR REPLACE STAGE PCB_CV_DEEP_PCB_DATASET_STAGE
     COMMENT = 'Stage for storing PCB images and labels from DeepPCB dataset';
 
@@ -124,7 +112,6 @@ CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_SERVICE_COMPUTEPOOL
 -- ============================================================================
 -- 9. Create Tables
 -- ============================================================================
--- Training dataset
 CREATE OR REPLACE TABLE TRAINING_DATA (
     FILENAME VARCHAR(255),
     IMAGE_DATA VARCHAR(16777216),
@@ -135,7 +122,6 @@ CREATE OR REPLACE TABLE TRAINING_DATA (
     YMAX FLOAT
 ) COMMENT = 'Training dataset with base64 encoded images and labels';
 
--- Test dataset
 CREATE OR REPLACE TABLE TEST_DATA (
     FILENAME VARCHAR(255),
     IMAGE_DATA VARCHAR(16777216),
@@ -146,7 +132,6 @@ CREATE OR REPLACE TABLE TEST_DATA (
     YMAX FLOAT
 ) COMMENT = 'Test dataset for model evaluation';
 
--- Detection outputs
 CREATE OR REPLACE TABLE DETECTION_OUTPUTS (
     IMAGE_DATA VARCHAR(16777216),
     OUTPUT VARCHAR(16777216),
@@ -158,34 +143,31 @@ CREATE OR REPLACE TABLE DETECTION_OUTPUTS (
 -- ============================================================================
 -- 10. Create Notebook from Git Repository
 -- ============================================================================
-CREATE OR REPLACE NOTEBOOK PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_MODEL
-    FROM '@PCB_CV.PUBLIC.PCB_CV_REPO/branches/main'
+CREATE OR REPLACE NOTEBOOK TRAIN_PCB_DEFECT_MODEL
+    FROM '@PCB_CV_REPO/branches/main'
     MAIN_FILE = 'notebooks/0_train_pcb_defect_detection_model.ipynb'
     QUERY_WAREHOUSE = PCB_CV_WH
     COMPUTE_POOL = PCB_CV_COMPUTEPOOL
     IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600;
 
--- Add live version and set external access
-ALTER NOTEBOOK PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_MODEL ADD LIVE VERSION FROM LAST;
-ALTER NOTEBOOK PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
+ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL ADD LIVE VERSION FROM LAST;
+ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
 
 -- ============================================================================
 -- 11. Create Streamlit App from Git Repository
 -- ============================================================================
-CREATE OR REPLACE STREAMLIT PCB_CV.PUBLIC.PCB_DEFECT_DETECTION_APP
-    FROM '@PCB_CV.PUBLIC.PCB_CV_REPO/branches/main/streamlit'
+CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
+    FROM '@PCB_CV_REPO/branches/main/streamlit'
     MAIN_FILE = 'app.py'
     QUERY_WAREHOUSE = PCB_CV_WH
     TITLE = 'PCB Defect Detection'
     COMMENT = '{"origin":"sf_sit-is", "name":"pcb_defect_detection", "version":{"major":1, "minor":0}, "attributes":{"is_quickstart":1, "source":"streamlit"}}';
 
-ALTER STREAMLIT PCB_CV.PUBLIC.PCB_DEFECT_DETECTION_APP ADD LIVE VERSION FROM LAST;
+ALTER STREAMLIT PCB_DEFECT_DETECTION_APP ADD LIVE VERSION FROM LAST;
 
 -- ============================================================================
 -- 12. Create Data Loading Procedure
 -- ============================================================================
--- This procedure downloads the DeepPCB dataset from GitHub and loads it into tables
-
 CREATE OR REPLACE PROCEDURE LOAD_DEEPPCB_DATA()
 RETURNS STRING
 LANGUAGE PYTHON
@@ -285,9 +267,6 @@ def load_data(session):
     print(f"Training set: {len(train_records)} records")
     print(f"Test set: {len(test_records)} records")
     
-    # Load into tables
-    import snowflake.snowpark as sp
-    
     # Clear existing data
     session.sql("TRUNCATE TABLE TRAINING_DATA").collect()
     session.sql("TRUNCATE TABLE TEST_DATA").collect()
@@ -317,7 +296,7 @@ SELECT 'PCB CV Setup Complete!' AS STATUS;
 
 SELECT 'OBJECT TYPE' AS TYPE, 'NAME' AS NAME, 'NOTES' AS NOTES
 UNION ALL SELECT '───────────────', '─────────────────────────────────', '─────────────────────────'
-UNION ALL SELECT 'Role', 'PCB_CV_ROLE', 'Granted to ' || $USERNAME
+UNION ALL SELECT 'Role', 'PCB_CV_ROLE', 'Granted to current user'
 UNION ALL SELECT 'Database', 'PCB_CV', ''
 UNION ALL SELECT 'Warehouse', 'PCB_CV_WH', 'SMALL, auto-suspend 5 min'
 UNION ALL SELECT 'Git Repo', 'PCB_CV_REPO', 'GitHub integration'
@@ -333,5 +312,8 @@ UNION ALL SELECT 'Streamlit', 'PCB_DEFECT_DETECTION_APP', 'Loaded from Git'
 UNION ALL SELECT 'Procedure', 'LOAD_DEEPPCB_DATA()', 'Downloads & loads dataset';
 
 -- ============================================================================
--- SETUP COMPLETE
+-- NEXT STEPS:
+-- 1. Run: CALL LOAD_DEEPPCB_DATA();  -- Load training data
+-- 2. Open the notebook: TRAIN_PCB_DEFECT_MODEL
+-- 3. Run all cells to train the model
 -- ============================================================================
