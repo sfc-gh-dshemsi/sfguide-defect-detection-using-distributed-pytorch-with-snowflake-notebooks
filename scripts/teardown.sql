@@ -12,21 +12,6 @@ USE ROLE ACCOUNTADMIN;
 -- ============================================================================
 DROP SERVICE IF EXISTS PCB_CV.PUBLIC.DEFECTDETECTSERVICE;
 
--- Drop any MODEL_BUILD services (auto-created during model deployment)
-DECLARE
-    svc_name VARCHAR;
-    c1 CURSOR FOR SELECT "name" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())) WHERE "name" LIKE 'MODEL_BUILD_%';
-BEGIN
-    EXECUTE IMMEDIATE 'SHOW SERVICES IN SCHEMA PCB_CV.PUBLIC';
-    OPEN c1;
-    LOOP
-        FETCH c1 INTO svc_name;
-        IF (NOT FOUND) THEN LEAVE; END IF;
-        EXECUTE IMMEDIATE 'DROP SERVICE IF EXISTS PCB_CV.PUBLIC.' || svc_name;
-    END LOOP;
-    CLOSE c1;
-END;
-
 -- ============================================================================
 -- 2. Drop Model (must be dropped before database)
 -- ============================================================================

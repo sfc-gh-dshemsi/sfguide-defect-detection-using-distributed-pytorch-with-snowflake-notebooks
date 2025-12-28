@@ -1,10 +1,6 @@
--- ============================================================================
+--- ============================================================================
 -- PCB Defect Detection with Distributed PyTorch - Setup Script
 -- ============================================================================
--- Run this script in Snowsight to set up all required objects for the
--- PCB defect detection demo with distributed GPU training.
--- ============================================================================
-
 USE ROLE ACCOUNTADMIN;
 
 SET USERNAME = (SELECT CURRENT_USER());
@@ -23,7 +19,7 @@ GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT CREATE INTEGRATION ON ACCOUNT TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 2. Create Database and Warehouse (as ACCOUNTADMIN for shared access)
+-- 2. Create Database, Warehouse, and Schema
 -- ============================================================================
 CREATE OR REPLACE WAREHOUSE PCB_CV_WH
     WAREHOUSE_SIZE = SMALL
@@ -34,88 +30,79 @@ CREATE OR REPLACE WAREHOUSE PCB_CV_WH
 CREATE OR REPLACE DATABASE PCB_CV;
 CREATE OR REPLACE SCHEMA PCB_CV.PUBLIC;
 
--- Grant ownership to PCB_CV_ROLE (required for Model Registry)
-GRANT OWNERSHIP ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
-
-USE DATABASE PCB_CV;
-USE SCHEMA PUBLIC;
-USE WAREHOUSE PCB_CV_WH;
-
 -- ============================================================================
--- 3. Create External Access Integration (for pip installs & data download)
+-- 3. Create Network Rule & Secret (DO THIS BEFORE TRANSFERRING OWNERSHIP)
 -- ============================================================================
+-- This must be done while ACCOUNTADMIN still owns the PUBLIC schema
 CREATE OR REPLACE NETWORK RULE PCB_CV.PUBLIC.allow_all_rule
     TYPE = 'HOST_PORT'
     MODE = 'EGRESS'
     VALUE_LIST = ('0.0.0.0:443', '0.0.0.0:80');
 
+-- Create Secret (Replace with your valid GitHub PAT)
+CREATE OR REPLACE SECRET PCB_CV.PUBLIC.GITHUB_SECRET
+    TYPE = PASSWORD
+    USERNAME = 'your_github_username' 
+    PASSWORD = 'your_github_pat' 
+    COMMENT = 'GitHub PAT for accessing PCB CV repository';
+
+-- ============================================================================
+-- 4. Transfer Ownership and Grant Usages
+-- ============================================================================
+GRANT USAGE ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE;
+GRANT OWNERSHIP ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+
+GRANT USAGE ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE;
+GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+
+GRANT USAGE ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+
+-- Grant permissions for existing objects in the schema to the new role
+GRANT USAGE, READ ON SECRET PCB_CV.PUBLIC.GITHUB_SECRET TO ROLE PCB_CV_ROLE;
+
+-- ============================================================================
+-- 5. Create Integrations (Requires ACCOUNTADMIN)
+-- ============================================================================
+-- External Access Integration
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION allow_all_integration
     ALLOWED_NETWORK_RULES = (PCB_CV.PUBLIC.allow_all_rule)
     ENABLED = true;
 
 GRANT USAGE ON INTEGRATION allow_all_integration TO ROLE PCB_CV_ROLE;
 
--- ============================================================================
--- 4. Git Integration (with authentication)
--- ============================================================================
-CREATE OR REPLACE SECRET PCB_CV.PUBLIC.GITHUB_SECRET
-    TYPE = PASSWORD
-    USERNAME = 'user_name'
-    PASSWORD = 'password'
-    COMMENT = 'GitHub PAT for accessing PCB CV repository';
-
--- Grant secret usage to role
-GRANT USAGE ON SECRET PCB_CV.PUBLIC.GITHUB_SECRET TO ROLE PCB_CV_ROLE;
-GRANT READ ON SECRET PCB_CV.PUBLIC.GITHUB_SECRET TO ROLE PCB_CV_ROLE;
-
--- Create API integration for Git (must reference the secret)
+-- Git API Integration
 CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB_CV
     API_PROVIDER = git_https_api
     API_ALLOWED_PREFIXES = ('https://github.com/')
     ALLOWED_AUTHENTICATION_SECRETS = (PCB_CV.PUBLIC.GITHUB_SECRET)
-    ENABLED = TRUE
-    COMMENT = 'Git integration with GitHub for PCB CV repository';
+    ENABLED = TRUE;
 
--- Grant integration usage to role
 GRANT USAGE ON INTEGRATION GITHUB_INTEGRATION_PCB_CV TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 5. Switch to PCB_CV_ROLE and Create Remaining Objects
+-- 6. Switch to PCB_CV_ROLE and Create Remaining Objects
 -- ============================================================================
 USE ROLE PCB_CV_ROLE;
+USE WAREHOUSE PCB_CV_WH;
 USE DATABASE PCB_CV;
 USE SCHEMA PUBLIC;
-USE WAREHOUSE PCB_CV_WH;
 
--- ============================================================================
--- 6. Create Git Repository (with authentication)
--- ============================================================================
-
+-- Create Git Repository
 CREATE OR REPLACE GIT REPOSITORY PCB_CV_REPO
     API_INTEGRATION = GITHUB_INTEGRATION_PCB_CV
     GIT_CREDENTIALS = PCB_CV.PUBLIC.GITHUB_SECRET
-    ORIGIN = 'https://github.com/sfc-gh-dshemsi/sfguide-defect-detection-using-distributed-pytorch-with-snowflake-notebooks.git'
-    COMMENT = 'Git repository for PCB Defect Detection demo';
+    ORIGIN = 'https://github.com/sfc-gh-dshemsi/sfguide-defect-detection-using-distributed-pytorch-with-snowflake-notebooks.git';
 
--- Fetch latest code from Git
 ALTER GIT REPOSITORY PCB_CV_REPO FETCH;
 
--- ============================================================================
--- 7. Create Stages
--- ============================================================================
-CREATE OR REPLACE STAGE PCB_CV_DEEP_PCB_DATASET_STAGE
-    COMMENT = 'Stage for storing PCB images and labels from DeepPCB dataset';
+-- Create Stages & Image Repo
+CREATE OR REPLACE STAGE PCB_CV_DEEP_PCB_DATASET_STAGE;
+CREATE OR REPLACE IMAGE REPOSITORY IMAGE_REPO;
+
 
 -- ============================================================================
--- 8. Create Image Repository (for SPCS model deployment)
--- ============================================================================
-CREATE OR REPLACE IMAGE REPOSITORY IMAGE_REPO
-    COMMENT = 'Image repository for model container images';
-
--- ============================================================================
--- 9. Create Compute Pools
+-- 7. Create Compute Pools
 -- ============================================================================
 -- GPU compute pool for distributed PyTorch training (1 GPU)
 CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_COMPUTEPOOL
@@ -134,7 +121,7 @@ CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_SERVICE_COMPUTEPOOL
     COMMENT = 'GPU compute pool for model inference service (Medium)';
 
 -- ============================================================================
--- 10. Create Tables
+-- 8. Create Tables
 -- ============================================================================
 CREATE OR REPLACE TABLE TRAINING_DATA (
     FILENAME VARCHAR(255),
@@ -165,7 +152,7 @@ CREATE OR REPLACE TABLE DETECTION_OUTPUTS (
 ) COMMENT = 'Model inference detection outputs';
 
 -- ============================================================================
--- 11. Create Notebook from Git Repository
+-- 9. Create Notebook from Git Repository
 -- ============================================================================
 CREATE OR REPLACE NOTEBOOK TRAIN_PCB_DEFECT_MODEL
     FROM '@PCB_CV_REPO/branches/main'
@@ -179,7 +166,7 @@ ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL ADD LIVE VERSION FROM LAST;
 ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
 
 -- ============================================================================
--- 12. Create Streamlit App from Git Repository
+-- 10. Create Streamlit App from Git Repository
 -- ============================================================================
 CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
     FROM '@PCB_CV_REPO/branches/main/streamlit'
@@ -193,11 +180,8 @@ CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
 ALTER STREAMLIT PCB_DEFECT_DETECTION_APP ADD LIVE VERSION FROM LAST;
 ALTER STREAMLIT PCB_DEFECT_DETECTION_APP SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
 
--- Grant usage on the Streamlit app (for other users if needed)
-GRANT USAGE ON STREAMLIT PCB_DEFECT_DETECTION_APP TO ROLE PCB_CV_ROLE;
-
 -- ============================================================================
--- 13. Create Data Loading Procedure
+-- 11. Create Data Loading Procedure
 -- ============================================================================
 CREATE OR REPLACE PROCEDURE LOAD_DEEPPCB_DATA()
 RETURNS STRING
@@ -346,34 +330,8 @@ def load_data(session):
 $$;
 
 -- ============================================================================
--- 14. Setup Complete - Display Summary
--- ============================================================================
-SELECT 'PCB CV Setup Complete!' AS STATUS;
-
-SELECT 'OBJECT TYPE' AS TYPE, 'NAME' AS NAME, 'NOTES' AS NOTES
-UNION ALL SELECT '───────────────', '─────────────────────────────────', '─────────────────────────'
-UNION ALL SELECT 'Role', 'PCB_CV_ROLE', 'Granted to current user'
-UNION ALL SELECT 'Database', 'PCB_CV', ''
-UNION ALL SELECT 'Warehouse', 'PCB_CV_WH', 'SMALL, auto-suspend 5 min'
-UNION ALL SELECT 'Git Repo', 'PCB_CV_REPO', 'GitHub integration'
-UNION ALL SELECT 'Stage', 'PCB_CV_DEEP_PCB_DATASET_STAGE', 'For images & labels'
-UNION ALL SELECT 'Image Repo', 'IMAGE_REPO', 'For SPCS containers'
-UNION ALL SELECT 'Compute Pool', 'PCB_CV_COMPUTEPOOL', 'GPU_NV_L (1 node) - Training'
-UNION ALL SELECT 'Compute Pool', 'PCB_CV_SERVICE_COMPUTEPOOL', 'GPU_NV_M (1 node) - Inference'
-UNION ALL SELECT 'Table', 'TRAINING_DATA', ''
-UNION ALL SELECT 'Table', 'TEST_DATA', ''
-UNION ALL SELECT 'Table', 'DETECTION_OUTPUTS', ''
-UNION ALL SELECT 'Notebook', 'TRAIN_PCB_DEFECT_MODEL', 'Loaded from Git'
-UNION ALL SELECT 'Streamlit', 'PCB_DEFECT_DETECTION_APP', 'Loaded from Git'
-UNION ALL SELECT 'Procedure', 'LOAD_DEEPPCB_DATA()', 'Downloads & loads dataset';
-
--- ============================================================================
--- 15. Load Training Data
+-- 12. Execute Data Load
 -- ============================================================================
 CALL LOAD_DEEPPCB_DATA();
 
--- ============================================================================
--- NEXT STEPS:
--- 1. Open the notebook: TRAIN_PCB_DEFECT_MODEL
--- 2. Run all cells to train the model
--- ============================================================================
+SELECT 'Setup Complete' AS STATUS;

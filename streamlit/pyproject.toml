@@ -1,0 +1,13 @@
+[project]
+name = "pcb-defect-detection"
+version = "1.0.0"
+description = "PCB Defect Detection Streamlit App"
+requires-python = ">=3.9"
+dependencies = [
+    "pillow",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "snowflake-ml-python>=1.6.0",
+]
+

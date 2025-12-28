@@ -1,9 +1,0 @@
-name: streamlit
-channels:
-  - snowflake
-dependencies:
-  - pillow
-  - numpy
-  - pandas
-  - matplotlib
-  - snowflake-ml-python
