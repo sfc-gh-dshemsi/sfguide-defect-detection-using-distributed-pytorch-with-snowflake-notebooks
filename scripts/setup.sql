@@ -22,9 +22,6 @@ GRANT CREATE COMPUTE POOL ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT CREATE INTEGRATION ON ACCOUNT TO ROLE PCB_CV_ROLE;
 
--- Note: CREATE SERVICE is granted on SCHEMA, not ACCOUNT
--- PCB_CV_ROLE will have this implicitly via schema ownership
-
 -- ============================================================================
 -- 2. Create Database and Warehouse (as ACCOUNTADMIN for shared access)
 -- ============================================================================
@@ -38,9 +35,9 @@ CREATE OR REPLACE DATABASE PCB_CV;
 CREATE OR REPLACE SCHEMA PCB_CV.PUBLIC;
 
 -- Grant full privileges to PCB_CV_ROLE
-GRANT OWNERSHIP ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE;
-GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT ALL ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE;
+GRANT ALL ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE;
+GRANT ALL ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
 
 USE DATABASE PCB_CV;
 USE SCHEMA PUBLIC;
@@ -63,12 +60,10 @@ GRANT USAGE ON INTEGRATION allow_all_integration TO ROLE PCB_CV_ROLE;
 -- ============================================================================
 -- 4. Git Integration (with authentication)
 -- ============================================================================
--- Create secret for GitHub authentication
--- NOTE: Update 'your_github_username' and 'your_github_pat' with your credentials
 CREATE OR REPLACE SECRET PCB_CV.PUBLIC.GITHUB_SECRET
     TYPE = PASSWORD
-    USERNAME = 'your_github_username'
-    PASSWORD = 'your_github_pat'
+    USERNAME = 'user_name'
+    PASSWORD = 'password'
     COMMENT = 'GitHub PAT for accessing PCB CV repository';
 
 -- Grant secret usage to role
@@ -87,11 +82,16 @@ CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB_CV
 GRANT USAGE ON INTEGRATION GITHUB_INTEGRATION_PCB_CV TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 5. Create Git Repository (with authentication)
+-- 5. Switch to PCB_CV_ROLE and Create Remaining Objects
 -- ============================================================================
 USE ROLE PCB_CV_ROLE;
 USE DATABASE PCB_CV;
 USE SCHEMA PUBLIC;
+USE WAREHOUSE PCB_CV_WH;
+
+-- ============================================================================
+-- 6. Create Git Repository (with authentication)
+-- ============================================================================
 
 CREATE OR REPLACE GIT REPOSITORY PCB_CV_REPO
     API_INTEGRATION = GITHUB_INTEGRATION_PCB_CV
@@ -103,38 +103,38 @@ CREATE OR REPLACE GIT REPOSITORY PCB_CV_REPO
 ALTER GIT REPOSITORY PCB_CV_REPO FETCH;
 
 -- ============================================================================
--- 6. Create Stages
+-- 7. Create Stages
 -- ============================================================================
 CREATE OR REPLACE STAGE PCB_CV_DEEP_PCB_DATASET_STAGE
     COMMENT = 'Stage for storing PCB images and labels from DeepPCB dataset';
 
 -- ============================================================================
--- 7. Create Image Repository (for SPCS model deployment)
+-- 8. Create Image Repository (for SPCS model deployment)
 -- ============================================================================
 CREATE OR REPLACE IMAGE REPOSITORY IMAGE_REPO
     COMMENT = 'Image repository for model container images';
 
 -- ============================================================================
--- 8. Create Compute Pools
+-- 9. Create Compute Pools
 -- ============================================================================
--- GPU compute pool for distributed PyTorch training (4 GPUs)
+-- GPU compute pool for distributed PyTorch training (1 GPU)
 CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_COMPUTEPOOL
-    MIN_NODES = 4
-    MAX_NODES = 4
+    MIN_NODES = 1
+    MAX_NODES = 1
     INSTANCE_FAMILY = GPU_NV_L
     AUTO_SUSPEND_SECS = 600
     COMMENT = 'GPU compute pool for distributed PyTorch training (Large)';
 
--- GPU compute pool for model inference service (4 GPUs)
+-- GPU compute pool for model inference service (1 GPU)
 CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_SERVICE_COMPUTEPOOL
-    MIN_NODES = 4
-    MAX_NODES = 4
+    MIN_NODES = 1
+    MAX_NODES = 1
     INSTANCE_FAMILY = GPU_NV_M
     AUTO_SUSPEND_SECS = 600
     COMMENT = 'GPU compute pool for model inference service (Medium)';
 
 -- ============================================================================
--- 9. Create Tables
+-- 10. Create Tables
 -- ============================================================================
 CREATE OR REPLACE TABLE TRAINING_DATA (
     FILENAME VARCHAR(255),
@@ -165,7 +165,7 @@ CREATE OR REPLACE TABLE DETECTION_OUTPUTS (
 ) COMMENT = 'Model inference detection outputs';
 
 -- ============================================================================
--- 10. Create Notebook from Git Repository
+-- 11. Create Notebook from Git Repository
 -- ============================================================================
 CREATE OR REPLACE NOTEBOOK TRAIN_PCB_DEFECT_MODEL
     FROM '@PCB_CV_REPO/branches/main'
@@ -182,7 +182,7 @@ ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow
 GRANT USAGE ON NOTEBOOK TRAIN_PCB_DEFECT_MODEL TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 11. Create Streamlit App from Git Repository
+-- 12. Create Streamlit App from Git Repository
 -- ============================================================================
 CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
     FROM '@PCB_CV_REPO/branches/main/streamlit'
@@ -198,7 +198,7 @@ ALTER STREAMLIT PCB_DEFECT_DETECTION_APP SET EXTERNAL_ACCESS_INTEGRATIONS = ('al
 GRANT USAGE ON STREAMLIT PCB_DEFECT_DETECTION_APP TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 12. Create Data Loading Procedure
+-- 13. Create Data Loading Procedure
 -- ============================================================================
 CREATE OR REPLACE PROCEDURE LOAD_DEEPPCB_DATA()
 RETURNS STRING
@@ -322,7 +322,7 @@ def load_data(session):
 $$;
 
 -- ============================================================================
--- 13. Setup Complete - Display Summary
+-- 14. Setup Complete - Display Summary
 -- ============================================================================
 SELECT 'PCB CV Setup Complete!' AS STATUS;
 
@@ -334,8 +334,8 @@ UNION ALL SELECT 'Warehouse', 'PCB_CV_WH', 'SMALL, auto-suspend 5 min'
 UNION ALL SELECT 'Git Repo', 'PCB_CV_REPO', 'GitHub integration'
 UNION ALL SELECT 'Stage', 'PCB_CV_DEEP_PCB_DATASET_STAGE', 'For images & labels'
 UNION ALL SELECT 'Image Repo', 'IMAGE_REPO', 'For SPCS containers'
-UNION ALL SELECT 'Compute Pool', 'PCB_CV_COMPUTEPOOL', 'GPU_NV_M (1-4 nodes) - Training'
-UNION ALL SELECT 'Compute Pool', 'PCB_CV_SERVICE_COMPUTEPOOL', 'GPU_NV_S (1 node) - Inference'
+UNION ALL SELECT 'Compute Pool', 'PCB_CV_COMPUTEPOOL', 'GPU_NV_L (1 node) - Training'
+UNION ALL SELECT 'Compute Pool', 'PCB_CV_SERVICE_COMPUTEPOOL', 'GPU_NV_M (1 node) - Inference'
 UNION ALL SELECT 'Table', 'TRAINING_DATA', ''
 UNION ALL SELECT 'Table', 'TEST_DATA', ''
 UNION ALL SELECT 'Table', 'DETECTION_OUTPUTS', ''
@@ -344,7 +344,7 @@ UNION ALL SELECT 'Streamlit', 'PCB_DEFECT_DETECTION_APP', 'Loaded from Git'
 UNION ALL SELECT 'Procedure', 'LOAD_DEEPPCB_DATA()', 'Downloads & loads dataset';
 
 -- ============================================================================
--- 14. Load Training Data
+-- 15. Load Training Data
 -- ============================================================================
 CALL LOAD_DEEPPCB_DATA();
 

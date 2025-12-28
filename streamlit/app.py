@@ -11,6 +11,8 @@ import base64
 import io
 from PIL import Image, ImageDraw
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 # Page config
 st.set_page_config(
@@ -22,6 +24,18 @@ st.set_page_config(
 # Get Snowflake session
 from snowflake.snowpark.context import get_active_session
 session = get_active_session()
+
+# ============================================================================
+# Header with Snowflake Logo
+# ============================================================================
+st.image("assets/snowflake_logo.png", width=120)
+st.title("🔍 :blue[PCB Defect Detection]")
+st.markdown("**Computer Vision based Defect Detection and Classification**")
+st.markdown("Detect manufacturing defects in PCB images using GPU-accelerated SPCS inference")
+
+# Display PCB sample image
+st.image("assets/pcb_sample.png", width=400, caption="Sample PCB Board")
+st.markdown("---")
 
 # ============================================================================
 # Constants
@@ -57,23 +71,13 @@ SERVICE_NAME = "DEFECTDETECTSERVICE"
 def check_service_status():
     """Check if the SPCS inference service is running."""
     try:
-        result = session.sql(f"""
-            SELECT status 
-            FROM TABLE(INFORMATION_SCHEMA.SERVICE_STATUS('{SERVICE_NAME}'))
-        """).collect()
-        if result:
-            return result[0]['STATUS'] == 'READY'
-        return False
+        services = session.sql("SHOW SERVICES").collect()
+        for svc in services:
+            if svc['name'] == SERVICE_NAME:
+                return svc['status'] == 'READY'
     except:
-        # Fallback: try to show services
-        try:
-            services = session.sql("SHOW SERVICES").collect()
-            for svc in services:
-                if svc['name'] == SERVICE_NAME:
-                    return svc['status'] == 'READY'
-        except:
-            pass
-        return False
+        pass
+    return False
 
 def run_inference(image_b64):
     """Run inference on an image using the SPCS model service."""
@@ -100,8 +104,8 @@ def run_inference(image_b64):
         st.error(f"Inference error: {str(e)}")
         return None
 
-def draw_detections(image, detections, score_threshold=0.3):
-    """Draw bounding boxes on image."""
+def draw_detections_pil(image, detections, score_threshold=0.3):
+    """Draw bounding boxes on image using PIL."""
     img_copy = image.copy()
     draw = ImageDraw.Draw(img_copy)
     
@@ -132,23 +136,90 @@ def draw_detections(image, detections, score_threshold=0.3):
     
     return img_copy
 
-# ============================================================================
-# UI Layout
-# ============================================================================
-st.title("🔍 PCB Defect Detection")
-st.markdown("Detect manufacturing defects in PCB images using GPU-accelerated SPCS inference")
+def draw_detections_matplotlib(image, detections, score_threshold=0.3, top_k=5):
+    """Draw bounding boxes on image using matplotlib (like original app)."""
+    boxes = detections.get('boxes', [])
+    labels = detections.get('labels', [])
+    scores = detections.get('scores', [])
+    
+    if not scores:
+        return None
+    
+    # Get top k predictions
+    data = pd.DataFrame({'box': boxes, 'label': labels, 'score': scores})
+    top_data = data.nlargest(top_k, 'score')
+    
+    top_boxes = top_data['box'].tolist()
+    top_labels = top_data['label'].tolist()
+    top_scores = top_data['score'].tolist()
+    
+    # Setup the plot
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.imshow(np.array(image))
+    
+    # Plot each bounding box
+    for label, box, score in zip(top_labels, top_boxes, top_scores):
+        if score < score_threshold or label == 0:
+            continue
+            
+        xmin, ymin, xmax, ymax = box
+        class_label = CLASS_NAMES.get(label, "unknown")
+        
+        # Create rectangle patch
+        rect = patches.Rectangle(
+            (xmin, ymin), xmax - xmin, ymax - ymin,
+            linewidth=2, edgecolor='red', facecolor='none'
+        )
+        ax.text(
+            xmin, ymin, f"{class_label}: {score:.2f}",
+            verticalalignment='top', color='red',
+            fontsize=10, weight='bold',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
+        )
+        ax.add_patch(rect)
+    
+    plt.axis('off')
+    return fig
 
-# Service status indicator
+def save_detection_results(image_b64, detections, filename="uploaded"):
+    """Save detection results to Snowflake table."""
+    try:
+        boxes = detections.get('boxes', [])
+        labels = detections.get('labels', [])
+        scores = detections.get('scores', [])
+        
+        rows = []
+        for i, (box, label, score) in enumerate(zip(boxes[:5], labels[:5], scores[:5])):
+            rows.append({
+                'IMAGE_DATA': image_b64,
+                'OUTPUT': json.dumps(detections),
+                'LABEL': int(label),
+                'BOX': box,
+                'SCORE': float(score)
+            })
+        
+        if rows:
+            df = session.create_dataframe(rows)
+            df.write.mode("append").save_as_table("DETECTION_OUTPUTS")
+            return True
+    except Exception as e:
+        st.warning(f"Could not save results: {e}")
+    return False
+
+# ============================================================================
+# Service Status
+# ============================================================================
 service_ready = check_service_status()
 if service_ready:
     st.success(f"✅ Inference Service `{SERVICE_NAME}` is running")
 else:
     st.warning(f"⚠️ Service `{SERVICE_NAME}` may not be ready. Run the notebook to deploy the model first.")
 
-st.markdown("---")
-
+# ============================================================================
 # Sidebar
+# ============================================================================
 with st.sidebar:
+    st.image("assets/snowflake_logo.png", width=80)
     st.header("⚙️ Settings")
     
     score_threshold = st.slider(
@@ -170,11 +241,14 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("📊 Defect Classes")
+    st.markdown("""
+    The model detects 6 types of PCB defects:
+    """)
     for class_id, class_name in CLASS_NAMES.items():
         if class_id > 0:
             color = CLASS_COLORS.get(class_id, "#FFFFFF")
             st.markdown(
-                f"<span style='color:{color}; font-size: 20px;'>●</span> {class_name}", 
+                f"<span style='color:{color}; font-size: 20px;'>●</span> **{class_name}**", 
                 unsafe_allow_html=True
             )
     
@@ -182,11 +256,21 @@ with st.sidebar:
     st.caption(f"Model: `{MODEL_NAME}` v{MODEL_VERSION}")
     st.caption(f"Service: `{SERVICE_NAME}`")
 
-# Main content
+# ============================================================================
+# Main Content - Tabs
+# ============================================================================
 tab1, tab2, tab3 = st.tabs(["📤 Upload Image", "🗃️ Test Dataset", "📈 Results History"])
 
+# ----------------------------------------------------------------------------
+# Tab 1: Upload Image
+# ----------------------------------------------------------------------------
 with tab1:
-    st.subheader("Upload a PCB Image")
+    st.subheader("Upload a PCB Image for Defect Detection")
+    
+    st.markdown("""
+    Image Base64 encoding is used to represent image data as text strings that can be easily 
+    stored and transmitted. Upload a PCB image below to detect manufacturing defects.
+    """)
     
     uploaded_file = st.file_uploader(
         "Choose an image...",
@@ -198,12 +282,12 @@ with tab1:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("**Original Image**")
+            st.markdown("**:green[Raw Image]**")
             image = Image.open(uploaded_file).convert("RGB")
-            st.image(image, use_column_width=True)
+            st.image(image, use_container_width=True)
         
         if st.button("🔍 Detect Defects", type="primary", key="upload_detect"):
-            with st.spinner("Running SPCS inference..."):
+            with st.spinner("Running inference using custom trained RCNN Object Detection PyTorch Model..."):
                 # Convert to base64
                 buffer = io.BytesIO()
                 image.save(buffer, format="JPEG")
@@ -217,9 +301,12 @@ with tab1:
                     detections = json.loads(output_str)
                     
                     with col2:
-                        st.markdown("**Detected Defects**")
-                        annotated = draw_detections(image, detections, score_threshold)
-                        st.image(annotated, use_column_width=True)
+                        st.markdown("**:green[Detected Defects]**")
+                        # Use matplotlib visualization like original app
+                        fig = draw_detections_matplotlib(image, detections, score_threshold, top_k)
+                        if fig:
+                            st.pyplot(fig)
+                            plt.close(fig)
                     
                     # Show detection details
                     st.markdown("---")
@@ -245,13 +332,19 @@ with tab1:
                             use_container_width=True,
                             hide_index=True
                         )
+                        
+                        # Save results
+                        if save_detection_results(image_b64, detections, uploaded_file.name):
+                            st.success("✓ Results saved to DETECTION_OUTPUTS table")
                     else:
                         st.info("No defects detected above the confidence threshold")
 
+# ----------------------------------------------------------------------------
+# Tab 2: Test Dataset
+# ----------------------------------------------------------------------------
 with tab2:
     st.subheader("Test Dataset Samples")
     
-    # Load samples from test dataset
     try:
         test_df = session.sql("SELECT * FROM TEST_DATA LIMIT 20").to_pandas()
         
@@ -267,10 +360,10 @@ with tab2:
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("**Test Image**")
+                st.markdown("**:green[Test Image]**")
                 image_data = base64.b64decode(row['IMAGE_DATA'])
                 image = Image.open(io.BytesIO(image_data)).convert("RGB")
-                st.image(image, use_column_width=True)
+                st.image(image, use_container_width=True)
                 
                 st.markdown(f"""
                 **Ground Truth:**
@@ -287,9 +380,11 @@ with tab2:
                         detections = json.loads(output_str)
                         
                         with col2:
-                            st.markdown("**Predicted Defects**")
-                            annotated = draw_detections(image, detections, score_threshold)
-                            st.image(annotated, use_column_width=True)
+                            st.markdown("**:green[Predicted Defects]**")
+                            fig = draw_detections_matplotlib(image, detections, score_threshold, top_k)
+                            if fig:
+                                st.pyplot(fig)
+                                plt.close(fig)
                             
                             # Show prediction summary
                             pred_labels = [l for l, s in zip(
@@ -305,6 +400,9 @@ with tab2:
     except Exception as e:
         st.error(f"Error loading test data: {str(e)}")
 
+# ----------------------------------------------------------------------------
+# Tab 3: Results History
+# ----------------------------------------------------------------------------
 with tab3:
     st.subheader("Detection Results History")
     
@@ -348,7 +446,9 @@ with tab3:
     except Exception as e:
         st.info("No detection results available yet.")
 
+# ============================================================================
 # Footer
+# ============================================================================
 st.markdown("---")
 st.markdown(
     "<div style='text-align: center; color: #666;'>"
@@ -356,4 +456,3 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True
 )
-

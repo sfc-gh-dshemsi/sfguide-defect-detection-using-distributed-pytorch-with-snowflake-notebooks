@@ -5,4 +5,5 @@ dependencies:
   - pillow
   - numpy
   - pandas
+  - matplotlib
   - snowflake-ml-python
