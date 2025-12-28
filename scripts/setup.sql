@@ -34,10 +34,10 @@ CREATE OR REPLACE WAREHOUSE PCB_CV_WH
 CREATE OR REPLACE DATABASE PCB_CV;
 CREATE OR REPLACE SCHEMA PCB_CV.PUBLIC;
 
--- Grant full privileges to PCB_CV_ROLE
-GRANT ALL ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE;
-GRANT ALL ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE;
-GRANT ALL ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+-- Grant ownership to PCB_CV_ROLE (required for Model Registry)
+GRANT OWNERSHIP ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
 
 USE DATABASE PCB_CV;
 USE SCHEMA PUBLIC;
@@ -96,7 +96,7 @@ USE WAREHOUSE PCB_CV_WH;
 CREATE OR REPLACE GIT REPOSITORY PCB_CV_REPO
     API_INTEGRATION = GITHUB_INTEGRATION_PCB_CV
     GIT_CREDENTIALS = PCB_CV.PUBLIC.GITHUB_SECRET
-    ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-defect-detection-using-distributed-pytorch-with-snowflake-notebooks.git'
+    ORIGIN = 'https://github.com/sfc-gh-dshemsi/sfguide-defect-detection-using-distributed-pytorch-with-snowflake-notebooks.git'
     COMMENT = 'Git repository for PCB Defect Detection demo';
 
 -- Fetch latest code from Git
@@ -119,17 +119,17 @@ CREATE OR REPLACE IMAGE REPOSITORY IMAGE_REPO
 -- ============================================================================
 -- GPU compute pool for distributed PyTorch training (1 GPU)
 CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_COMPUTEPOOL
-    MIN_NODES = 1
-    MAX_NODES = 1
-    INSTANCE_FAMILY = GPU_NV_L
+    MIN_NODES = 3
+    MAX_NODES = 3
+    INSTANCE_FAMILY = GPU_NV_M
     AUTO_SUSPEND_SECS = 600
     COMMENT = 'GPU compute pool for distributed PyTorch training (Large)';
 
 -- GPU compute pool for model inference service (1 GPU)
 CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_SERVICE_COMPUTEPOOL
-    MIN_NODES = 1
-    MAX_NODES = 1
-    INSTANCE_FAMILY = GPU_NV_M
+    MIN_NODES = 3
+    MAX_NODES = 3
+    INSTANCE_FAMILY = GPU_NV_S
     AUTO_SUSPEND_SECS = 600
     COMMENT = 'GPU compute pool for model inference service (Medium)';
 
@@ -178,9 +178,6 @@ CREATE OR REPLACE NOTEBOOK TRAIN_PCB_DEFECT_MODEL
 ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL ADD LIVE VERSION FROM LAST;
 ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
 
--- Grant usage on the notebook (for other users if needed)
-GRANT USAGE ON NOTEBOOK TRAIN_PCB_DEFECT_MODEL TO ROLE PCB_CV_ROLE;
-
 -- ============================================================================
 -- 12. Create Streamlit App from Git Repository
 -- ============================================================================
@@ -188,6 +185,8 @@ CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
     FROM '@PCB_CV_REPO/branches/main/streamlit'
     MAIN_FILE = 'app.py'
     QUERY_WAREHOUSE = PCB_CV_WH
+    COMPUTE_POOL = PCB_CV_SERVICE_COMPUTEPOOL
+    RUNTIME_NAME = 'SYSTEM$ST_CONTAINER_RUNTIME_PY3_11'
     TITLE = 'PCB Defect Detection'
     COMMENT = '{"origin":"sf_sit-is", "name":"pcb_defect_detection", "version":{"major":1, "minor":0}, "attributes":{"is_quickstart":1, "source":"streamlit"}}';
 
@@ -216,18 +215,22 @@ import os
 import base64
 from PIL import Image
 import random
+import re
 
 def load_data(session):
     """
     Download DeepPCB dataset and load into Snowflake tables.
     Dataset: https://github.com/tangsanli5201/DeepPCB
+    
+    Structure: PCBData/group{N}/{N}/*_test.jpg (images)
+               PCBData/group{N}/{N}_not/*.txt (labels)
     """
     
-    # DeepPCB dataset URL (hosted on GitHub)
-    DATASET_URL = "https://github.com/tangsanli5201/DeepPCB/raw/master/PCBData.zip"
+    # Download entire DeepPCB repository as zip
+    REPO_URL = "https://github.com/tangsanli5201/DeepPCB/archive/refs/heads/master.zip"
     
-    print("Downloading DeepPCB dataset...")
-    response = requests.get(DATASET_URL, timeout=300)
+    print("Downloading DeepPCB repository...")
+    response = requests.get(REPO_URL, timeout=600, allow_redirects=True)
     
     if response.status_code != 200:
         return f"Failed to download dataset: HTTP {response.status_code}"
@@ -235,24 +238,36 @@ def load_data(session):
     print("Extracting dataset...")
     zip_file = zipfile.ZipFile(io.BytesIO(response.content))
     
-    # Parse dataset structure
-    # PCBData/
-    #   group00001/
-    #     00041000_temp.jpg (template)
-    #     00041000_test.jpg (test image with defects)
-    #     00041000.txt (labels)
+    # Build index of all files in zip
+    all_files = zip_file.namelist()
+    
+    # Find all test images and their corresponding labels
+    # Structure: DeepPCB-master/PCBData/group{N}/{N}/*_test.jpg
+    #            DeepPCB-master/PCBData/group{N}/{N}_not/*.txt
     
     data_records = []
+    processed_images = 0
     
-    for name in zip_file.namelist():
-        # Process test images (ones with defects)
-        if name.endswith('_test.jpg'):
-            # Get corresponding label file
-            base_name = name.replace('_test.jpg', '')
-            label_file = base_name + '.txt'
+    for name in all_files:
+        # Find test images
+        if '_test.jpg' in name and '/PCBData/' in name:
+            # Extract the base filename (e.g., "00041000")
+            filename_base = os.path.basename(name).replace('_test.jpg', '')
             
-            # Extract filename without path
-            filename = os.path.basename(name).replace('_test.jpg', '')
+            # Get the directory containing the image
+            img_dir = os.path.dirname(name)
+            
+            # Construct the _not directory path for labels
+            # e.g., group00001/00001 -> group00001/00001_not
+            parent_dir = os.path.dirname(img_dir)
+            folder_name = os.path.basename(img_dir)
+            not_dir = os.path.join(parent_dir, folder_name + '_not')
+            
+            # Find the label file
+            label_file = os.path.join(not_dir, filename_base + '.txt')
+            
+            # Normalize path separators
+            label_file = label_file.replace('\\', '/')
             
             try:
                 # Read and encode image
@@ -260,33 +275,42 @@ def load_data(session):
                     img_bytes = img_file.read()
                     image_b64 = base64.b64encode(img_bytes).decode('utf-8')
                 
-                # Read labels
-                if label_file in zip_file.namelist():
-                    with zip_file.open(label_file) as lbl_file:
-                        for line in lbl_file.read().decode('utf-8').strip().split('\n'):
-                            if line.strip():
-                                parts = line.strip().split()
-                                if len(parts) >= 5:
-                                    xmin, ymin, xmax, ymax = map(float, parts[:4])
-                                    defect_class = int(parts[4])
-                                    
-                                    data_records.append({
-                                        'FILENAME': filename,
-                                        'IMAGE_DATA': image_b64,
-                                        'CLASS': defect_class,
-                                        'XMIN': xmin,
-                                        'YMIN': ymin,
-                                        'XMAX': xmax,
-                                        'YMAX': ymax
-                                    })
+                # Try to find and read the label file
+                label_found = False
+                for f in all_files:
+                    if f.endswith(filename_base + '.txt') and '_not/' in f:
+                        with zip_file.open(f) as lbl_file:
+                            for line in lbl_file.read().decode('utf-8').strip().split('\\n'):
+                                if line.strip():
+                                    parts = line.strip().split()
+                                    if len(parts) >= 5:
+                                        xmin, ymin, xmax, ymax = map(float, parts[:4])
+                                        defect_class = int(parts[4])
+                                        
+                                        data_records.append({
+                                            'FILENAME': filename_base,
+                                            'IMAGE_DATA': image_b64,
+                                            'CLASS': defect_class,
+                                            'XMIN': xmin,
+                                            'YMIN': ymin,
+                                            'XMAX': xmax,
+                                            'YMAX': ymax
+                                        })
+                                        label_found = True
+                        break
+                
+                processed_images += 1
+                if processed_images % 50 == 0:
+                    print(f"Processed {processed_images} images...")
+                    
             except Exception as e:
                 print(f"Error processing {name}: {e}")
                 continue
     
     if not data_records:
-        return "No valid records found in dataset"
+        return f"No valid records found. Processed {processed_images} images but found no matching labels."
     
-    print(f"Found {len(data_records)} defect annotations")
+    print(f"Found {len(data_records)} defect annotations from {processed_images} images")
     
     # Shuffle and split 90/10
     random.seed(42)

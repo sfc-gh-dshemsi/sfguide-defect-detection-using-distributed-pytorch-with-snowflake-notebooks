@@ -262,14 +262,14 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["📤 Upload Image", "🗃️ Test Dataset", "📈 Results History"])
 
 # ----------------------------------------------------------------------------
-# Tab 1: Upload Image
+# Tab 1: Upload Image (Container Runtime supports file_uploader)
 # ----------------------------------------------------------------------------
 with tab1:
     st.subheader("Upload a PCB Image for Defect Detection")
     
     st.markdown("""
-    Image Base64 encoding is used to represent image data as text strings that can be easily 
-    stored and transmitted. Upload a PCB image below to detect manufacturing defects.
+    Upload a PCB image to detect manufacturing defects using the trained Faster R-CNN model.
+    Supported formats: JPG, JPEG, PNG
     """)
     
     uploaded_file = st.file_uploader(
@@ -282,7 +282,7 @@ with tab1:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("**:green[Raw Image]**")
+            st.markdown("**:green[Uploaded Image]**")
             image = Image.open(uploaded_file).convert("RGB")
             st.image(image, use_container_width=True)
         
@@ -302,7 +302,6 @@ with tab1:
                     
                     with col2:
                         st.markdown("**:green[Detected Defects]**")
-                        # Use matplotlib visualization like original app
                         fig = draw_detections_matplotlib(image, detections, score_threshold, top_k)
                         if fig:
                             st.pyplot(fig)

@@ -8,60 +8,71 @@
 USE ROLE ACCOUNTADMIN;
 
 -- ============================================================================
--- 1. Drop Services (must be dropped before compute pools)
+-- 1. Drop Services (must be dropped before compute pools and models)
 -- ============================================================================
 DROP SERVICE IF EXISTS PCB_CV.PUBLIC.DEFECTDETECTSERVICE;
 
--- Drop any model build services
-SHOW SERVICES IN SCHEMA PCB_CV.PUBLIC;
--- Note: Manually drop any MODEL_BUILD_% services if they exist
+-- Drop any MODEL_BUILD services (auto-created during model deployment)
+DECLARE
+    svc_name VARCHAR;
+    c1 CURSOR FOR SELECT "name" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())) WHERE "name" LIKE 'MODEL_BUILD_%';
+BEGIN
+    EXECUTE IMMEDIATE 'SHOW SERVICES IN SCHEMA PCB_CV.PUBLIC';
+    OPEN c1;
+    LOOP
+        FETCH c1 INTO svc_name;
+        IF (NOT FOUND) THEN LEAVE; END IF;
+        EXECUTE IMMEDIATE 'DROP SERVICE IF EXISTS PCB_CV.PUBLIC.' || svc_name;
+    END LOOP;
+    CLOSE c1;
+END;
 
 -- ============================================================================
--- 2. Drop Streamlit App
+-- 2. Drop Model (must be dropped before database)
+-- ============================================================================
+DROP MODEL IF EXISTS PCB_CV.PUBLIC.DEFECTDETECTIONMODEL;
+
+-- ============================================================================
+-- 3. Drop Streamlit App
 -- ============================================================================
 DROP STREAMLIT IF EXISTS PCB_CV.PUBLIC.PCB_DEFECT_DETECTION_APP;
 
 -- ============================================================================
--- 3. Drop Notebook
+-- 4. Drop Notebook
 -- ============================================================================
 DROP NOTEBOOK IF EXISTS PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_MODEL;
 
 -- ============================================================================
--- 4. Drop Git Repository
+-- 5. Drop Git Repository
 -- ============================================================================
 DROP GIT REPOSITORY IF EXISTS PCB_CV.PUBLIC.PCB_CV_REPO;
 
 -- ============================================================================
--- 5. Drop Secret
+-- 6. Drop Secret
 -- ============================================================================
 DROP SECRET IF EXISTS PCB_CV.PUBLIC.GITHUB_SECRET;
 
 -- ============================================================================
--- 6. Drop Compute Pools
+-- 7. Drop Compute Pools
 -- ============================================================================
 DROP COMPUTE POOL IF EXISTS PCB_CV_COMPUTEPOOL;
 DROP COMPUTE POOL IF EXISTS PCB_CV_SERVICE_COMPUTEPOOL;
 
 -- ============================================================================
--- 7. Drop Database (includes all schemas, tables, stages, repos)
+-- 8. Drop Database (includes all schemas, tables, stages, network rules, etc.)
 -- ============================================================================
 DROP DATABASE IF EXISTS PCB_CV;
 
 -- ============================================================================
--- 8. Drop Warehouse
+-- 9. Drop Warehouse
 -- ============================================================================
 DROP WAREHOUSE IF EXISTS PCB_CV_WH;
 
 -- ============================================================================
--- 9. Drop Integrations
+-- 10. Drop Integrations
 -- ============================================================================
 DROP INTEGRATION IF EXISTS GITHUB_INTEGRATION_PCB_CV;
 DROP INTEGRATION IF EXISTS allow_all_integration;
-
--- ============================================================================
--- 10. Drop Network Rule
--- ============================================================================
-DROP NETWORK RULE IF EXISTS allow_all_rule;
 
 -- ============================================================================
 -- 11. Drop Role
