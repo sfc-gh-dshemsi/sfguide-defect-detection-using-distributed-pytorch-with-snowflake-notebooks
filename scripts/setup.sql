@@ -22,6 +22,9 @@ GRANT CREATE COMPUTE POOL ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT CREATE INTEGRATION ON ACCOUNT TO ROLE PCB_CV_ROLE;
 
+-- Note: CREATE SERVICE is granted on SCHEMA, not ACCOUNT
+-- PCB_CV_ROLE will have this implicitly via schema ownership
+
 -- ============================================================================
 -- 2. Create Database and Warehouse (as ACCOUNTADMIN for shared access)
 -- ============================================================================
