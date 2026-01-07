@@ -75,21 +75,17 @@ GRANT CREATE PROCEDURE ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
 -- Grant on existing objects in schema
 GRANT USAGE, READ ON SECRET PCB_CV.PUBLIC.GITHUB_SECRET TO ROLE PCB_CV_ROLE;
 
--- NOW transfer ownership (after all grants are in place)
-GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
-
 -- ============================================================================
--- 5. Create Integrations (Requires ACCOUNTADMIN)
+-- 5. Create Integrations (Requires ACCOUNTADMIN - BEFORE ownership transfer)
 -- ============================================================================
--- External Access Integration
+-- External Access Integration (must be created while ACCOUNTADMIN owns the network rule)
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION allow_all_integration
     ALLOWED_NETWORK_RULES = (PCB_CV.PUBLIC.allow_all_rule)
     ENABLED = true;
 
 GRANT USAGE ON INTEGRATION allow_all_integration TO ROLE PCB_CV_ROLE;
 
--- Git API Integration
+-- Git API Integration (must be created while ACCOUNTADMIN owns the secret)
 CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB_CV
     API_PROVIDER = git_https_api
     API_ALLOWED_PREFIXES = ('https://github.com/')
@@ -99,7 +95,13 @@ CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB_CV
 GRANT USAGE ON INTEGRATION GITHUB_INTEGRATION_PCB_CV TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 6. Switch to PCB_CV_ROLE and Create Remaining Objects
+-- 6. Transfer Ownership (AFTER all grants and integrations are set up)
+-- ============================================================================
+GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+
+-- ============================================================================
+-- 7. Switch to PCB_CV_ROLE and Create Remaining Objects
 -- ============================================================================
 USE ROLE PCB_CV_ROLE;
 USE WAREHOUSE PCB_CV_WH;
@@ -120,7 +122,7 @@ CREATE OR REPLACE IMAGE REPOSITORY IMAGE_REPO;
 
 
 -- ============================================================================
--- 7. Create Compute Pools
+-- 8. Create Compute Pools
 -- ============================================================================
 -- GPU compute pool for distributed PyTorch training (1 GPU)
 CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_COMPUTEPOOL
@@ -147,7 +149,7 @@ CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_STREAMLIT_POOL
     COMMENT = 'CPU compute pool for Streamlit app (SiS vNext Container Runtime)';
 
 -- ============================================================================
--- 8. Create Tables
+-- 9. Create Tables
 -- ============================================================================
 CREATE OR REPLACE TABLE TRAINING_DATA (
     FILENAME VARCHAR(255),
@@ -178,7 +180,7 @@ CREATE OR REPLACE TABLE DETECTION_OUTPUTS (
 ) COMMENT = 'Model inference detection outputs';
 
 -- ============================================================================
--- 9. Create Notebook from Git Repository
+-- 10. Create Notebook from Git Repository
 -- ============================================================================
 CREATE OR REPLACE NOTEBOOK TRAIN_PCB_DEFECT_MODEL
     FROM '@PCB_CV_REPO/branches/main'
@@ -192,7 +194,7 @@ ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL ADD LIVE VERSION FROM LAST;
 ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
 
 -- ============================================================================
--- 10. Create Streamlit App from Git Repository
+-- 11. Create Streamlit App from Git Repository
 -- ============================================================================
 CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
     FROM '@PCB_CV_REPO/branches/main/streamlit'
@@ -210,7 +212,7 @@ ALTER STREAMLIT PCB_DEFECT_DETECTION_APP SET EXTERNAL_ACCESS_INTEGRATIONS = ('al
 GRANT USAGE ON STREAMLIT PCB_DEFECT_DETECTION_APP TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 11. Create Data Loading Procedure
+-- 12. Create Data Loading Procedure
 -- ============================================================================
 CREATE OR REPLACE PROCEDURE LOAD_DEEPPCB_DATA()
 RETURNS STRING
@@ -359,7 +361,7 @@ def load_data(session):
 $$;
 
 -- ============================================================================
--- 12. Execute Data Load
+-- 13. Execute Data Load
 -- ============================================================================
 CALL LOAD_DEEPPCB_DATA();
 
