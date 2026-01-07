@@ -104,7 +104,7 @@ GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
 -- ============================================================================
 USE ROLE PCB_CV_ROLE;
 USE WAREHOUSE PCB_CV_WH;
-USE DATABASE PCB_CV
+USE DATABASE PCB_CV;
 USE SCHEMA PUBLIC;
 
 -- Create Git Repository
