@@ -43,7 +43,7 @@ DROP STREAMLIT IF EXISTS PCB_CV.PUBLIC.PCB_DEFECT_DETECTION_APP;
 -- 4. Drop Notebooks
 -- ============================================================================
 DROP NOTEBOOK IF EXISTS PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_MODEL;
-DROP NOTEBOOK IF EXISTS PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_DETECTION_YOLO;
+DROP NOTEBOOK IF EXISTS PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_MODEL_YOLO;
 
 -- ============================================================================
 -- 5. Drop Git Repository

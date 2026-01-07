@@ -190,6 +190,19 @@ CREATE OR REPLACE NOTEBOOK TRAIN_PCB_DEFECT_MODEL
 ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL ADD LIVE VERSION FROM LAST;
 ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
 
+-- Create YOLO Notebook (alternative model - faster training, single GPU)
+CREATE OR REPLACE NOTEBOOK TRAIN_PCB_DEFECT_MODEL_YOLO
+    FROM '@PCB_CV_REPO/branches/main'
+    MAIN_FILE = 'notebooks/1_train_pcb_defect_detection_yolo.ipynb'
+    QUERY_WAREHOUSE = PCB_CV_WH
+    COMPUTE_POOL = PCB_CV_COMPUTEPOOL
+    RUNTIME_NAME = 'SYSTEM$GPU_RUNTIME'
+    IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600
+    COMMENT = '{"origin":"sf_sit-is", "name":"pcb_defect_detection_yolo", "version":{"major":1, "minor":0}, "attributes":{"is_quickstart":1, "source":"notebook"}}';
+
+ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL_YOLO ADD LIVE VERSION FROM LAST;
+ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL_YOLO SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
+
 -- ============================================================================
 -- 11. Create Streamlit App from Git Repository
 -- ============================================================================
