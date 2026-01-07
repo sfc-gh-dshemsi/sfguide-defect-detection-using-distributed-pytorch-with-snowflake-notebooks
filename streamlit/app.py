@@ -229,10 +229,10 @@ with st.sidebar:
     score_threshold = st.slider(
         "Confidence Threshold",
         min_value=0.1,
-        max_value=0.9,
-        value=0.3,
+        max_value=0.99,
+        value=0.7,
         step=0.05,
-        help="Minimum confidence score for detections"
+        help="Minimum confidence score for detections (default 70%)"
     )
     
     top_k = st.slider(
