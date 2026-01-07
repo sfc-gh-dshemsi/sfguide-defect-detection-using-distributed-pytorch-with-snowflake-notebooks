@@ -22,7 +22,7 @@ GRANT CREATE INTEGRATION ON ACCOUNT TO ROLE PCB_CV_ROLE;
 -- 2. Create Database, Warehouse, and Schema
 -- ============================================================================
 CREATE OR REPLACE WAREHOUSE PCB_CV_WH
-    WAREHOUSE_SIZE = SMALL
+    WAREHOUSE_SIZE = MEDIUM
     AUTO_SUSPEND = 300
     AUTO_RESUME = TRUE
     INITIALLY_SUSPENDED = TRUE;
@@ -112,13 +112,21 @@ CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_COMPUTEPOOL
     AUTO_SUSPEND_SECS = 600
     COMMENT = 'GPU compute pool for distributed PyTorch training (Large)';
 
--- GPU compute pool for model inference service (1 GPU)
+-- GPU compute pool for model inference service
 CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_SERVICE_COMPUTEPOOL
-    MIN_NODES = 3
+    MIN_NODES = 1
     MAX_NODES = 3
     INSTANCE_FAMILY = GPU_NV_S
     AUTO_SUSPEND_SECS = 600
-    COMMENT = 'GPU compute pool for model inference service (Medium)';
+    COMMENT = 'GPU compute pool for model inference service';
+
+-- CPU compute pool for Streamlit app (cost-effective for UI)
+CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_STREAMLIT_POOL
+    MIN_NODES = 1
+    MAX_NODES = 2
+    INSTANCE_FAMILY = CPU_X64_XS
+    AUTO_SUSPEND_SECS = 600
+    COMMENT = 'CPU compute pool for Streamlit app (SiS vNext Container Runtime)';
 
 -- ============================================================================
 -- 8. Create Tables
@@ -172,13 +180,16 @@ CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
     FROM '@PCB_CV_REPO/branches/main/streamlit'
     MAIN_FILE = 'app.py'
     QUERY_WAREHOUSE = PCB_CV_WH
-    COMPUTE_POOL = PCB_CV_SERVICE_COMPUTEPOOL
+    COMPUTE_POOL = PCB_CV_STREAMLIT_POOL
     RUNTIME_NAME = 'SYSTEM$ST_CONTAINER_RUNTIME_PY3_11'
     TITLE = 'PCB Defect Detection'
     COMMENT = '{"origin":"sf_sit-is", "name":"pcb_defect_detection", "version":{"major":1, "minor":0}, "attributes":{"is_quickstart":1, "source":"streamlit"}}';
 
 ALTER STREAMLIT PCB_DEFECT_DETECTION_APP ADD LIVE VERSION FROM LAST;
 ALTER STREAMLIT PCB_DEFECT_DETECTION_APP SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
+
+-- Grant usage on the Streamlit app (for other users if needed)
+GRANT USAGE ON STREAMLIT PCB_DEFECT_DETECTION_APP TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
 -- 11. Create Data Loading Procedure

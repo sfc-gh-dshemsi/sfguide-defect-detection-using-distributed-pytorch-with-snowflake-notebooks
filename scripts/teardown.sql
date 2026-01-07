@@ -10,11 +10,21 @@ USE ROLE ACCOUNTADMIN;
 -- ============================================================================
 -- 1. Drop Services (must be dropped before compute pools and models)
 -- ============================================================================
+-- First, list all services to find MODEL_BUILD_% services
+SHOW SERVICES IN SCHEMA PCB_CV.PUBLIC;
+
+-- Drop the main inference service
 DROP SERVICE IF EXISTS PCB_CV.PUBLIC.DEFECTDETECTSERVICE;
 
+-- Drop any MODEL_BUILD services (auto-created during model deployment)
+-- Copy service names from SHOW SERVICES output above and drop them:
+-- Example: DROP SERVICE IF EXISTS PCB_CV.PUBLIC.MODEL_BUILD_XXXXXX;
+
 -- ============================================================================
--- 2. Drop Model (must be dropped before database)
+-- 2. Drop Model (after all inference services are dropped)
 -- ============================================================================
+-- NOTE: If you get "Model is being used by inference services", 
+-- run SHOW SERVICES and drop any remaining MODEL_BUILD_% services first.
 DROP MODEL IF EXISTS PCB_CV.PUBLIC.DEFECTDETECTIONMODEL;
 
 -- ============================================================================
@@ -42,6 +52,7 @@ DROP SECRET IF EXISTS PCB_CV.PUBLIC.GITHUB_SECRET;
 -- ============================================================================
 DROP COMPUTE POOL IF EXISTS PCB_CV_COMPUTEPOOL;
 DROP COMPUTE POOL IF EXISTS PCB_CV_SERVICE_COMPUTEPOOL;
+DROP COMPUTE POOL IF EXISTS PCB_CV_STREAMLIT_POOL;
 
 -- ============================================================================
 -- 8. Drop Database (includes all schemas, tables, stages, network rules, etc.)
