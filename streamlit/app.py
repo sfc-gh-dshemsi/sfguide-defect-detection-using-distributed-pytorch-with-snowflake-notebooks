@@ -67,16 +67,19 @@ SERVICE_NAME = "DEFECTDETECTSERVICE"
 # ============================================================================
 # Helper Functions
 # ============================================================================
-@st.cache_data(ttl=60)
 def check_service_status():
     """Check if the SPCS inference service is running."""
     try:
-        services = session.sql("SHOW SERVICES").collect()
+        services = session.sql("SHOW SERVICES IN SCHEMA PCB_CV.PUBLIC").collect()
         for svc in services:
-            if svc['name'] == SERVICE_NAME:
-                return svc['status'] == 'READY'
-    except:
-        pass
+            # Try to access by index since Row object might not support .get()
+            svc_dict = svc.as_dict() if hasattr(svc, 'as_dict') else dict(svc)
+            svc_name = str(svc_dict.get('name', svc_dict.get('NAME', '')))
+            svc_status = str(svc_dict.get('status', svc_dict.get('STATUS', '')))
+            if svc_name.upper() == SERVICE_NAME.upper():
+                return svc_status.upper() in ('READY', 'RUNNING')
+    except Exception as e:
+        st.sidebar.caption(f"Service check: {e}")
     return False
 
 def run_inference(image_b64):
@@ -190,12 +193,13 @@ def save_detection_results(image_b64, detections, filename="uploaded"):
         
         rows = []
         for i, (box, label, score) in enumerate(zip(boxes[:5], labels[:5], scores[:5])):
+            # Use lowercase keys to match notebook table schema
             rows.append({
-                'IMAGE_DATA': image_b64,
-                'OUTPUT': json.dumps(detections),
-                'LABEL': int(label),
-                'BOX': box,
-                'SCORE': float(score)
+                'image_data': image_b64,
+                'output': json.dumps(detections),
+                'label': int(label),
+                'box': box,
+                'score': float(score)
             })
         
         if rows:
@@ -353,7 +357,20 @@ with tab2:
     st.subheader("Test Dataset Samples")
     
     try:
-        test_df = session.sql("SELECT * FROM TEST_DATA LIMIT 20").to_pandas()
+        # Get balanced sample across all defect types (more from common classes)
+        test_df = session.sql("""
+            (SELECT * FROM TEST_DATA WHERE CLASS = 1 LIMIT 10)
+            UNION ALL
+            (SELECT * FROM TEST_DATA WHERE CLASS = 2 LIMIT 5)
+            UNION ALL
+            (SELECT * FROM TEST_DATA WHERE CLASS = 3 LIMIT 10)
+            UNION ALL
+            (SELECT * FROM TEST_DATA WHERE CLASS = 4 LIMIT 5)
+            UNION ALL
+            (SELECT * FROM TEST_DATA WHERE CLASS = 5 LIMIT 5)
+            UNION ALL
+            (SELECT * FROM TEST_DATA WHERE CLASS = 6 LIMIT 5)
+        """).to_pandas()
         
         if len(test_df) > 0:
             selected_idx = st.selectbox(
@@ -402,6 +419,10 @@ with tab2:
                             if pred_labels:
                                 pred_classes = [CLASS_NAMES.get(l, "unknown") for l in pred_labels[:3]]
                                 st.markdown(f"**Predictions:** {', '.join(pred_classes)}")
+                        
+                        # Save results to database
+                        if save_detection_results(row['IMAGE_DATA'], detections, row['FILENAME']):
+                            st.success("✓ Results saved to DETECTION_OUTPUTS table")
         else:
             st.warning("No test data found. Run `CALL LOAD_DEEPPCB_DATA()` first.")
     except Exception as e:
@@ -414,22 +435,26 @@ with tab3:
     st.subheader("Detection Results History")
     
     try:
+        # Query with lowercase column names (notebook creates lowercase)
         results_df = session.sql("""
             SELECT 
-                LABEL,
-                SCORE,
-                BOX
+                "label" as LABEL,
+                "score" as SCORE,
+                "box" as BOX
             FROM DETECTION_OUTPUTS 
-            ORDER BY SCORE DESC
+            WHERE "score" IS NOT NULL
+            ORDER BY "score" DESC
             LIMIT 50
         """).to_pandas()
         
         if len(results_df) > 0:
             # Add class names
             results_df['Defect'] = results_df['LABEL'].apply(
-                lambda x: CLASS_NAMES.get(int(x), "unknown")
+                lambda x: CLASS_NAMES.get(int(x), "unknown") if pd.notna(x) else "unknown"
             )
-            results_df['Confidence'] = results_df['SCORE'].apply(lambda x: f"{x:.1%}")
+            results_df['Confidence'] = results_df['SCORE'].apply(
+                lambda x: f"{x:.1%}" if pd.notna(x) else "N/A"
+            )
             
             st.dataframe(
                 results_df[['Defect', 'Confidence', 'BOX']],
@@ -444,14 +469,14 @@ with tab3:
                 st.metric("Total Detections", len(results_df))
             with col2:
                 avg_conf = results_df['SCORE'].mean()
-                st.metric("Avg Confidence", f"{avg_conf:.1%}")
+                st.metric("Avg Confidence", f"{avg_conf:.1%}" if pd.notna(avg_conf) else "N/A")
             with col3:
                 unique_defects = results_df['Defect'].nunique()
                 st.metric("Defect Types", unique_defects)
         else:
             st.info("No detection results yet. Run inference to populate results.")
     except Exception as e:
-        st.info("No detection results available yet.")
+        st.warning(f"Could not load results: {str(e)}")
 
 # ============================================================================
 # Footer
