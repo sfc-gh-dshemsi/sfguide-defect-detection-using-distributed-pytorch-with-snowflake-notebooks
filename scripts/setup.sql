@@ -17,6 +17,7 @@ GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT CREATE COMPUTE POOL ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO ROLE PCB_CV_ROLE;
 GRANT CREATE INTEGRATION ON ACCOUNT TO ROLE PCB_CV_ROLE;
+GRANT CREATE SERVICE ON ACCOUNT TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
 -- 2. Create Database, Warehouse, and Schema
@@ -47,19 +48,36 @@ CREATE OR REPLACE SECRET PCB_CV.PUBLIC.GITHUB_SECRET
     COMMENT = 'GitHub PAT for accessing PCB CV repository';
 
 -- ============================================================================
--- 4. Transfer Ownership and Grant Usages
+-- 4. Grant Privileges and Transfer Ownership
 -- ============================================================================
+-- IMPORTANT: Grant all privileges BEFORE transferring ownership!
+-- Once ownership is transferred, ACCOUNTADMIN can no longer grant on those objects.
+
+-- Warehouse grants and ownership
 GRANT USAGE ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE;
 GRANT OWNERSHIP ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
 
+-- Database grants (but NOT ownership yet - need to grant on schema first)
 GRANT USAGE ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE;
-GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT ALL PRIVILEGES ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE;
 
+-- Schema grants (BEFORE any ownership transfer)
 GRANT USAGE ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
-GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT ALL PRIVILEGES ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+GRANT CREATE MODEL ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+GRANT CREATE STAGE ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+GRANT CREATE SERVICE ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+GRANT CREATE TABLE ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+GRANT CREATE VIEW ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+GRANT CREATE FUNCTION ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
+GRANT CREATE PROCEDURE ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
 
--- Grant permissions for existing objects in the schema to the new role
+-- Grant on existing objects in schema
 GRANT USAGE, READ ON SECRET PCB_CV.PUBLIC.GITHUB_SECRET TO ROLE PCB_CV_ROLE;
+
+-- NOW transfer ownership (after all grants are in place)
+GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
 
 -- ============================================================================
 -- 5. Create Integrations (Requires ACCOUNTADMIN)
