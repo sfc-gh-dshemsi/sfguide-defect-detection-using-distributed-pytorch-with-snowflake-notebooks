@@ -147,6 +147,14 @@ CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_STREAMLIT_POOL
     AUTO_SUSPEND_SECS = 600
     COMMENT = 'CPU compute pool for Streamlit app (SiS vNext Container Runtime)';
 
+-- Ensure PCB_CV_ROLE owns all compute pools (in case they were created by ACCOUNTADMIN)
+-- This is idempotent - if already owned by PCB_CV_ROLE, these are no-ops
+USE ROLE ACCOUNTADMIN;
+GRANT OWNERSHIP ON COMPUTE POOL PCB_CV_COMPUTEPOOL TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON COMPUTE POOL PCB_CV_SERVICE_COMPUTEPOOL TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON COMPUTE POOL PCB_CV_STREAMLIT_POOL TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
+USE ROLE PCB_CV_ROLE;
+
 -- ============================================================================
 -- 9. Create Tables
 -- ============================================================================
