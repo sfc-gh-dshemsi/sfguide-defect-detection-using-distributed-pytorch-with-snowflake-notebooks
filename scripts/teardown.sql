@@ -10,21 +10,28 @@ USE ROLE ACCOUNTADMIN;
 -- ============================================================================
 -- 1. Drop Services (must be dropped before compute pools and models)
 -- ============================================================================
--- First, list all services to find MODEL_BUILD_% services
+-- IMPORTANT: Run this first to see all services
 SHOW SERVICES IN SCHEMA PCB_CV.PUBLIC;
 
 -- Drop the main inference service
 DROP SERVICE IF EXISTS PCB_CV.PUBLIC.DEFECTDETECTSERVICE;
 
 -- Drop any MODEL_BUILD services (auto-created during model deployment)
--- Copy service names from SHOW SERVICES output above and drop them:
--- Example: DROP SERVICE IF EXISTS PCB_CV.PUBLIC.MODEL_BUILD_XXXXXX;
+-- These services are created automatically when logging models to registry.
+-- Run SHOW SERVICES above, find any MODEL_BUILD_% services, and drop them:
+-- SHOW SERVICES IN SCHEMA PCB_CV.PUBLIC;
+--
+-- Common pattern: MODEL_BUILD_XXXXXXXX (8 character hex ID)
+-- Example: DROP SERVICE IF EXISTS PCB_CV.PUBLIC.MODEL_BUILD_5837C509;
+--
+-- >>> PASTE YOUR MODEL_BUILD SERVICE DROP COMMAND HERE <<<
+-- DROP SERVICE IF EXISTS PCB_CV.PUBLIC.MODEL_BUILD_XXXXXXXX;
 
 -- ============================================================================
--- 2. Drop Model (after all inference services are dropped)
+-- 2. Drop Model (after all services are dropped)
 -- ============================================================================
 -- NOTE: If you get "Model is being used by inference services", 
--- run SHOW SERVICES and drop any remaining MODEL_BUILD_% services first.
+-- go back to step 1 and ensure ALL MODEL_BUILD_% services are dropped first.
 DROP MODEL IF EXISTS PCB_CV.PUBLIC.DEFECTDETECTIONMODEL;
 
 -- ============================================================================
@@ -33,9 +40,10 @@ DROP MODEL IF EXISTS PCB_CV.PUBLIC.DEFECTDETECTIONMODEL;
 DROP STREAMLIT IF EXISTS PCB_CV.PUBLIC.PCB_DEFECT_DETECTION_APP;
 
 -- ============================================================================
--- 4. Drop Notebook
+-- 4. Drop Notebooks
 -- ============================================================================
 DROP NOTEBOOK IF EXISTS PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_MODEL;
+DROP NOTEBOOK IF EXISTS PCB_CV.PUBLIC.TRAIN_PCB_DEFECT_DETECTION_YOLO;
 
 -- ============================================================================
 -- 5. Drop Git Repository
@@ -52,7 +60,6 @@ DROP SECRET IF EXISTS PCB_CV.PUBLIC.GITHUB_SECRET;
 -- ============================================================================
 DROP COMPUTE POOL IF EXISTS PCB_CV_COMPUTEPOOL;
 DROP COMPUTE POOL IF EXISTS PCB_CV_SERVICE_COMPUTEPOOL;
-DROP COMPUTE POOL IF EXISTS PCB_CV_STREAMLIT_POOL;
 
 -- ============================================================================
 -- 8. Drop Database (includes all schemas, tables, stages, network rules, etc.)

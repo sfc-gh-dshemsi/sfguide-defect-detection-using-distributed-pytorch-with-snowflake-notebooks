@@ -3,6 +3,9 @@
 -- ============================================================================
 USE ROLE ACCOUNTADMIN;
 
+-- Set query tag for tracking
+ALTER SESSION SET query_tag = '{"origin":"sf_sit-is","name":"pcb_defect_detection","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+
 SET USERNAME = (SELECT CURRENT_USER());
 SELECT $USERNAME;
 
@@ -49,9 +52,6 @@ CREATE OR REPLACE SECRET PCB_CV.PUBLIC.GITHUB_SECRET
 -- ============================================================================
 -- 4. Grant Privileges and Transfer Ownership
 -- ============================================================================
--- IMPORTANT: Grant all privileges BEFORE transferring ownership!
--- Once ownership is transferred, ACCOUNTADMIN can no longer grant on those objects.
-
 -- Warehouse grants and ownership
 GRANT USAGE ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE;
 GRANT OWNERSHIP ON WAREHOUSE PCB_CV_WH TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
@@ -75,16 +75,16 @@ GRANT CREATE PROCEDURE ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE;
 GRANT USAGE, READ ON SECRET PCB_CV.PUBLIC.GITHUB_SECRET TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 5. Create Integrations (Requires ACCOUNTADMIN - BEFORE ownership transfer)
+-- 5. Create Integrations 
 -- ============================================================================
--- External Access Integration (must be created while ACCOUNTADMIN owns the network rule)
+-- External Access Integration 
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION allow_all_integration
     ALLOWED_NETWORK_RULES = (PCB_CV.PUBLIC.allow_all_rule)
     ENABLED = true;
 
 GRANT USAGE ON INTEGRATION allow_all_integration TO ROLE PCB_CV_ROLE;
 
--- Git API Integration (must be created while ACCOUNTADMIN owns the secret)
+-- Git API Integration 
 CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB_CV
     API_PROVIDER = git_https_api
     API_ALLOWED_PREFIXES = ('https://github.com/')
@@ -94,7 +94,7 @@ CREATE OR REPLACE API INTEGRATION GITHUB_INTEGRATION_PCB_CV
 GRANT USAGE ON INTEGRATION GITHUB_INTEGRATION_PCB_CV TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================
--- 6. Transfer Ownership (AFTER all grants and integrations are set up)
+-- 6. Transfer Ownership 
 -- ============================================================================
 GRANT OWNERSHIP ON SCHEMA PCB_CV.PUBLIC TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
 GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
@@ -104,7 +104,7 @@ GRANT OWNERSHIP ON DATABASE PCB_CV TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
 -- ============================================================================
 USE ROLE PCB_CV_ROLE;
 USE WAREHOUSE PCB_CV_WH;
-USE DATABASE PCB_CV;
+USE DATABASE PCB_CV
 USE SCHEMA PUBLIC;
 
 -- Create Git Repository
@@ -129,30 +129,19 @@ CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_COMPUTEPOOL
     MAX_NODES = 3
     INSTANCE_FAMILY = GPU_NV_M
     AUTO_SUSPEND_SECS = 600
-    COMMENT = 'GPU compute pool for distributed PyTorch training (Large)';
+    COMMENT = 'GPU compute pool for distributed PyTorch training';
 
 -- GPU compute pool for model inference service
 CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_SERVICE_COMPUTEPOOL
-    MIN_NODES = 1
+    MIN_NODES = 3
     MAX_NODES = 3
     INSTANCE_FAMILY = GPU_NV_S
     AUTO_SUSPEND_SECS = 600
     COMMENT = 'GPU compute pool for model inference service';
 
--- CPU compute pool for Streamlit app (cost-effective for UI)
-CREATE COMPUTE POOL IF NOT EXISTS PCB_CV_STREAMLIT_POOL
-    MIN_NODES = 1
-    MAX_NODES = 2
-    INSTANCE_FAMILY = CPU_X64_XS
-    AUTO_SUSPEND_SECS = 600
-    COMMENT = 'CPU compute pool for Streamlit app (SiS vNext Container Runtime)';
-
--- Ensure PCB_CV_ROLE owns all compute pools (in case they were created by ACCOUNTADMIN)
--- This is idempotent - if already owned by PCB_CV_ROLE, these are no-ops
 USE ROLE ACCOUNTADMIN;
 GRANT OWNERSHIP ON COMPUTE POOL PCB_CV_COMPUTEPOOL TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
 GRANT OWNERSHIP ON COMPUTE POOL PCB_CV_SERVICE_COMPUTEPOOL TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON COMPUTE POOL PCB_CV_STREAMLIT_POOL TO ROLE PCB_CV_ROLE COPY CURRENT GRANTS;
 USE ROLE PCB_CV_ROLE;
 
 -- ============================================================================
@@ -195,7 +184,8 @@ CREATE OR REPLACE NOTEBOOK TRAIN_PCB_DEFECT_MODEL
     QUERY_WAREHOUSE = PCB_CV_WH
     COMPUTE_POOL = PCB_CV_COMPUTEPOOL
     RUNTIME_NAME = 'SYSTEM$GPU_RUNTIME'
-    IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600;
+    IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600
+    COMMENT = '{"origin":"sf_sit-is", "name":"pcb_defect_detection", "version":{"major":1, "minor":0}, "attributes":{"is_quickstart":1, "source":"notebook"}}';
 
 ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL ADD LIVE VERSION FROM LAST;
 ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
@@ -203,19 +193,18 @@ ALTER NOTEBOOK TRAIN_PCB_DEFECT_MODEL SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow
 -- ============================================================================
 -- 11. Create Streamlit App from Git Repository
 -- ============================================================================
+-- Using Native SiS (not Container Runtime) for snowflake-ml-python compatibility
 CREATE OR REPLACE STREAMLIT PCB_DEFECT_DETECTION_APP
     FROM '@PCB_CV_REPO/branches/main/streamlit'
     MAIN_FILE = 'app.py'
     QUERY_WAREHOUSE = PCB_CV_WH
-    COMPUTE_POOL = PCB_CV_STREAMLIT_POOL
-    RUNTIME_NAME = 'SYSTEM$ST_CONTAINER_RUNTIME_PY3_11'
     TITLE = 'PCB Defect Detection'
     COMMENT = '{"origin":"sf_sit-is", "name":"pcb_defect_detection", "version":{"major":1, "minor":0}, "attributes":{"is_quickstart":1, "source":"streamlit"}}';
 
 ALTER STREAMLIT PCB_DEFECT_DETECTION_APP ADD LIVE VERSION FROM LAST;
 ALTER STREAMLIT PCB_DEFECT_DETECTION_APP SET EXTERNAL_ACCESS_INTEGRATIONS = ('allow_all_integration');
 
--- Grant usage on the Streamlit app (for other users if needed)
+-- Grant usage on the Streamlit app
 GRANT USAGE ON STREAMLIT PCB_DEFECT_DETECTION_APP TO ROLE PCB_CV_ROLE;
 
 -- ============================================================================

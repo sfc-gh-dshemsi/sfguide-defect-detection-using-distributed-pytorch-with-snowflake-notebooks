@@ -259,84 +259,92 @@ with st.sidebar:
 # ============================================================================
 # Main Content - Tabs
 # ============================================================================
-tab1, tab2, tab3 = st.tabs(["📤 Upload Image", "🗃️ Test Dataset", "📈 Results History"])
+tab1, tab2, tab3 = st.tabs(["🎯 Quick Demo", "🗃️ Test Dataset", "📈 Results History"])
 
 # ----------------------------------------------------------------------------
-# Tab 1: Upload Image (Container Runtime supports file_uploader)
+# Tab 1: Sample Image Detection
 # ----------------------------------------------------------------------------
 with tab1:
-    st.subheader("Upload a PCB Image for Defect Detection")
+    st.subheader("Quick Demo: Detect Defects in Sample Image")
     
     st.markdown("""
-    Upload a PCB image to detect manufacturing defects using the trained Faster R-CNN model.
-    Supported formats: JPG, JPEG, PNG
+    Run defect detection on a sample PCB image from the test dataset.
+    For custom images, use the **Test Dataset** tab to select from available images.
     """)
     
-    uploaded_file = st.file_uploader(
-        "Choose an image...",
-        type=["jpg", "jpeg", "png"],
-        help="Upload a PCB image to detect defects"
-    )
-    
-    if uploaded_file is not None:
-        col1, col2 = st.columns(2)
+    # Get a random sample from test data
+    try:
+        sample_df = session.sql("SELECT * FROM TEST_DATA ORDER BY RANDOM() LIMIT 1").to_pandas()
         
-        with col1:
-            st.markdown("**:green[Uploaded Image]**")
-            image = Image.open(uploaded_file).convert("RGB")
-            st.image(image, use_container_width=True)
-        
-        if st.button("🔍 Detect Defects", type="primary", key="upload_detect"):
-            with st.spinner("Running inference using custom trained RCNN Object Detection PyTorch Model..."):
-                # Convert to base64
-                buffer = io.BytesIO()
-                image.save(buffer, format="JPEG")
-                image_b64 = base64.b64encode(buffer.getvalue()).decode()
+        if len(sample_df) > 0:
+            row = sample_df.iloc[0]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**:green[Sample PCB Image]**")
+                image_data = base64.b64decode(row['IMAGE_DATA'])
+                image = Image.open(io.BytesIO(image_data)).convert("RGB")
+                st.image(image, use_container_width=True)
                 
-                # Run inference
-                result = run_inference(image_b64)
-                
-                if result is not None and len(result) > 0:
-                    output_str = result.iloc[0]['output']
-                    detections = json.loads(output_str)
+                st.markdown(f"""
+                **Ground Truth:**
+                - **Defect:** `{CLASS_NAMES.get(int(row['CLASS']), 'unknown')}`
+                - **Location:** ({row['XMIN']:.0f}, {row['YMIN']:.0f}) → ({row['XMAX']:.0f}, {row['YMAX']:.0f})
+                """)
+            
+            if st.button("🔍 Detect Defects", type="primary", key="sample_detect"):
+                with st.spinner("Running inference using custom trained RCNN Object Detection PyTorch Model..."):
+                    result = run_inference(row['IMAGE_DATA'])
                     
-                    with col2:
-                        st.markdown("**:green[Detected Defects]**")
-                        fig = draw_detections_matplotlib(image, detections, score_threshold, top_k)
-                        if fig:
-                            st.pyplot(fig)
-                            plt.close(fig)
-                    
-                    # Show detection details
-                    st.markdown("---")
-                    st.subheader("Detection Details")
-                    
-                    detection_data = []
-                    for i, (box, label, score) in enumerate(zip(
-                        detections.get('boxes', [])[:top_k],
-                        detections.get('labels', [])[:top_k],
-                        detections.get('scores', [])[:top_k]
-                    )):
-                        if score >= score_threshold and label > 0:
-                            detection_data.append({
-                                "#": i + 1,
-                                "Defect": CLASS_NAMES.get(label, "unknown"),
-                                "Confidence": f"{score:.1%}",
-                                "Box": f"({box[0]:.0f}, {box[1]:.0f}) → ({box[2]:.0f}, {box[3]:.0f})"
-                            })
-                    
-                    if detection_data:
-                        st.dataframe(
-                            pd.DataFrame(detection_data), 
-                            use_container_width=True,
-                            hide_index=True
-                        )
+                    if result is not None and len(result) > 0:
+                        output_str = result.iloc[0]['output']
+                        detections = json.loads(output_str)
                         
-                        # Save results
-                        if save_detection_results(image_b64, detections, uploaded_file.name):
-                            st.success("✓ Results saved to DETECTION_OUTPUTS table")
-                    else:
-                        st.info("No defects detected above the confidence threshold")
+                        with col2:
+                            st.markdown("**:green[Detected Defects]**")
+                            fig = draw_detections_matplotlib(image, detections, score_threshold, top_k)
+                            if fig:
+                                st.pyplot(fig)
+                                plt.close(fig)
+                        
+                        # Show detection details
+                        st.markdown("---")
+                        st.subheader("Detection Details")
+                        
+                        detection_data = []
+                        for i, (box, label, score) in enumerate(zip(
+                            detections.get('boxes', [])[:top_k],
+                            detections.get('labels', [])[:top_k],
+                            detections.get('scores', [])[:top_k]
+                        )):
+                            if score >= score_threshold and label > 0:
+                                detection_data.append({
+                                    "#": i + 1,
+                                    "Defect": CLASS_NAMES.get(label, "unknown"),
+                                    "Confidence": f"{score:.1%}",
+                                    "Box": f"({box[0]:.0f}, {box[1]:.0f}) → ({box[2]:.0f}, {box[3]:.0f})"
+                                })
+                        
+                        if detection_data:
+                            st.dataframe(
+                                pd.DataFrame(detection_data), 
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            
+                            # Save results
+                            if save_detection_results(row['IMAGE_DATA'], detections, row['FILENAME']):
+                                st.success("✓ Results saved to DETECTION_OUTPUTS table")
+                        else:
+                            st.info("No defects detected above the confidence threshold")
+            
+            if st.button("🔄 Load Different Sample", key="refresh_sample"):
+                st.rerun()
+        else:
+            st.warning("No test data found. Run `CALL LOAD_DEEPPCB_DATA()` first.")
+    except Exception as e:
+        st.error(f"Error loading sample: {str(e)}")
 
 # ----------------------------------------------------------------------------
 # Tab 2: Test Dataset
