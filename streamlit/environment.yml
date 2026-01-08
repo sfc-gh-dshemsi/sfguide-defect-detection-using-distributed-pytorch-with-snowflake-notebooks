@@ -1,11 +1,11 @@
-name: streamlit_env
+name: pcb_defect_dashboard
 channels:
   - snowflake
 dependencies:
   - streamlit
-  - snowflake-snowpark-python
-  - snowflake-ml-python
-  - pillow
-  - numpy
   - pandas
-  - matplotlib
+  - numpy
+  - plotly
+  - altair
+  - pillow
+

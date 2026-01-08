@@ -1,490 +1,343 @@
-# ============================================================================
-# PCB Defect Detection - Streamlit App
-# ============================================================================
-# Interactive defect detection on PCB images using SPCS model service
-# ============================================================================
+"""
+PCB Defect Detection Dashboard - Executive Overview
+
+Main entry point for the Streamlit application.
+Displays KPIs, defect distribution, and trends.
+"""
 
 import streamlit as st
 import pandas as pd
-import json
-import base64
-import io
-from PIL import Image, ImageDraw
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import plotly.express as px
+import plotly.graph_objects as go
+from snowflake.snowpark.context import get_active_session
 
-# Page config
+from utils.data_loader import (
+    load_defect_summary,
+    load_daily_trends,
+    load_factory_line_data
+)
+from utils.query_registry import (
+    execute_query,
+    get_query_for_model
+)
+
+# =============================================================================
+# PAGE CONFIGURATION
+# =============================================================================
+
 st.set_page_config(
     page_title="PCB Defect Detection",
     page_icon="🔍",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Get Snowflake session
-from snowflake.snowpark.context import get_active_session
+# Dark theme styling
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #0f172a;
+    }
+    .metric-card {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 1.5rem;
+        text-align: center;
+    }
+    .metric-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #64D2FF;
+    }
+    .metric-label {
+        font-size: 0.875rem;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# =============================================================================
+# SIDEBAR
+# =============================================================================
+
+with st.sidebar:
+    st.image("images/logo.svg", width=150)
+    st.title("PCB Defect Detection")
+    st.markdown("---")
+    
+    # Model Selector
+    st.markdown("### 🤖 Model Selection")
+    model_choice = st.radio(
+        "Choose Model",
+        ["YOLOv12", "Faster R-CNN"],
+        help="YOLOv12: Fast, real-time inference\nFaster R-CNN: Higher accuracy, distributed training"
+    )
+    
+    st.markdown("---")
+    st.markdown("### Quick Stats")
+
+# =============================================================================
+# DATA LOADING
+# =============================================================================
+
 session = get_active_session()
 
-# ============================================================================
-# Header with Snowflake Logo
-# ============================================================================
-st.image("assets/snowflake_logo.png", width=120)
-st.title("🔍 :blue[PCB Defect Detection]")
-st.markdown("**Computer Vision based Defect Detection and Classification**")
-st.markdown("Detect manufacturing defects in PCB images using GPU-accelerated SPCS inference")
+# Determine which queries to use based on model selection
+model_type = 'YOLO' if model_choice == 'YOLOv12' else 'R-CNN'
 
-# Display PCB sample image
-st.image("assets/pcb_sample.png", width=400, caption="Sample PCB Board")
+try:
+    # Load data based on selected model
+    if model_type == 'YOLO':
+        defect_summary = load_defect_summary(session)
+        daily_trends = load_daily_trends(session)
+        factory_data = load_factory_line_data(session)
+        
+        # Get total counts
+        total_query = get_query_for_model('total_defects', 'YOLO')
+        pcb_query = get_query_for_model('pcb_count', 'YOLO')
+        total_df = execute_query(session, total_query, "total_defects")
+        pcb_df = execute_query(session, pcb_query, "pcb_count")
+        
+        total_defects = int(total_df['TOTAL_DEFECTS'].iloc[0]) if not total_df.empty else 0
+        total_pcbs = int(pcb_df['TOTAL_PCBS'].iloc[0]) if not pcb_df.empty else 0
+    else:  # R-CNN
+        # Load R-CNN data
+        defect_query = get_query_for_model('defect_summary', 'R-CNN')
+        defect_summary = execute_query(session, defect_query, "defect_summary_rcnn")
+        
+        total_query = get_query_for_model('total_defects', 'R-CNN')
+        total_df = execute_query(session, total_query, "total_defects_rcnn")
+        
+        total_defects = int(total_df['TOTAL_DEFECTS'].iloc[0]) if not total_df.empty else 0
+        total_pcbs = 0  # R-CNN doesn't track PCB metadata
+        daily_trends = None
+        factory_data = None
+    
+    data_loaded = True
+except Exception as e:
+    st.error(f"Error loading data: {e}")
+    data_loaded = False
+    total_defects = 0
+    total_pcbs = 0
+
+# =============================================================================
+# HEADER
+# =============================================================================
+
+st.title("🔍 PCB Defect Detection Dashboard")
+st.markdown(f"*Real-time defect analytics powered by **{model_choice}** on Snowflake*")
+
+# =============================================================================
+# KPI CARDS
+# =============================================================================
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-value">{total_defects:,}</div>
+        <div class="metric-label">Total Defects</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col2:
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-value">{total_pcbs:,}</div>
+        <div class="metric-label">PCBs Inspected</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col3:
+    if total_pcbs > 0:  # Only show defect rate for YOLO (has PCB tracking)
+        defect_rate = (total_defects / max(total_pcbs, 1)) * 100
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{defect_rate:.1f}%</div>
+            <div class="metric-label">Defect Rate</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:  # R-CNN doesn't track PCBs
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">N/A</div>
+            <div class="metric-label">Defect Rate</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+with col4:
+    num_classes = len(defect_summary) if data_loaded and not defect_summary.empty else 0
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-value">{num_classes}</div>
+        <div class="metric-label">Defect Types</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 st.markdown("---")
 
-# ============================================================================
-# Constants
-# ============================================================================
-CLASS_NAMES = {
-    0: "background",
-    1: "open",
-    2: "short",
-    3: "mousebite",
-    4: "spur",
-    5: "copper",
-    6: "pin-hole"
-}
+# =============================================================================
+# CHARTS
+# =============================================================================
 
-CLASS_COLORS = {
-    1: "#FF6B6B",  # open - red
-    2: "#4ECDC4",  # short - teal
-    3: "#45B7D1",  # mousebite - blue
-    4: "#96CEB4",  # spur - green
-    5: "#FFEAA7",  # copper - yellow
-    6: "#DDA0DD",  # pin-hole - plum
-}
-
-# Model and service configuration
-MODEL_NAME = "DEFECTDETECTIONMODEL"
-MODEL_VERSION = "v1"
-SERVICE_NAME = "DEFECTDETECTSERVICE"
-
-# ============================================================================
-# Helper Functions
-# ============================================================================
-def check_service_status():
-    """Check if the SPCS inference service is running."""
-    try:
-        services = session.sql("SHOW SERVICES IN SCHEMA PCB_CV.PUBLIC").collect()
-        for svc in services:
-            # Try to access by index since Row object might not support .get()
-            svc_dict = svc.as_dict() if hasattr(svc, 'as_dict') else dict(svc)
-            svc_name = str(svc_dict.get('name', svc_dict.get('NAME', '')))
-            svc_status = str(svc_dict.get('status', svc_dict.get('STATUS', '')))
-            if svc_name.upper() == SERVICE_NAME.upper():
-                return svc_status.upper() in ('READY', 'RUNNING')
-    except Exception as e:
-        st.sidebar.caption(f"Service check: {e}")
-    return False
-
-def run_inference(image_b64):
-    """Run inference on an image using the SPCS model service."""
-    try:
-        from snowflake.ml.registry import Registry
+if data_loaded and not defect_summary.empty:
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📊 Defect Distribution (Pareto)")
         
-        # Get model from registry
-        reg = Registry(session=session)
-        model = reg.get_model(MODEL_NAME)
-        mv = model.version(MODEL_VERSION)
+        # Sort by count for Pareto
+        df_sorted = defect_summary.sort_values('DEFECT_COUNT', ascending=False)
         
-        # Create input DataFrame
-        input_df = pd.DataFrame({'IMAGE_DATA': [image_b64]})
+        fig = go.Figure()
         
-        # Run inference via SPCS service
-        result = mv.run(
-            input_df, 
-            function_name="predict", 
-            service_name=SERVICE_NAME
+        # Bar chart
+        fig.add_trace(go.Bar(
+            x=df_sorted['DETECTED_CLASS'],
+            y=df_sorted['DEFECT_COUNT'],
+            name='Count',
+            marker_color='#64D2FF'
+        ))
+        
+        # Cumulative line
+        df_sorted['CUMULATIVE_PCT'] = df_sorted['DEFECT_COUNT'].cumsum() / df_sorted['DEFECT_COUNT'].sum() * 100
+        fig.add_trace(go.Scatter(
+            x=df_sorted['DETECTED_CLASS'],
+            y=df_sorted['CUMULATIVE_PCT'],
+            name='Cumulative %',
+            yaxis='y2',
+            line=dict(color='#FF9F0A', width=2),
+            mode='lines+markers'
+        ))
+        
+        fig.update_layout(
+            paper_bgcolor='#0f172a',
+            plot_bgcolor='#0f172a',
+            font=dict(color='#e2e8f0'),
+            yaxis=dict(title='Count', gridcolor='#334155'),
+            yaxis2=dict(title='Cumulative %', overlaying='y', side='right', range=[0, 105]),
+            xaxis=dict(title='Defect Class', gridcolor='#334155'),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            margin=dict(l=40, r=40, t=40, b=40),
+            height=400
         )
         
-        return result
-    except Exception as e:
-        st.error(f"Inference error: {str(e)}")
-        return None
-
-def draw_detections_pil(image, detections, score_threshold=0.3):
-    """Draw bounding boxes on image using PIL."""
-    img_copy = image.copy()
-    draw = ImageDraw.Draw(img_copy)
+        st.plotly_chart(fig, use_container_width=True)
     
-    boxes = detections.get('boxes', [])
-    labels = detections.get('labels', [])
-    scores = detections.get('scores', [])
-    
-    for box, label, score in zip(boxes, labels, scores):
-        if score < score_threshold or label == 0:
-            continue
+    with col2:
+        if model_type == 'YOLO' and factory_data is not None:
+            st.subheader("🏭 Factory Line Performance")
             
-        xmin, ymin, xmax, ymax = box
-        color = CLASS_COLORS.get(label, "#FFFFFF")
-        class_name = CLASS_NAMES.get(label, "unknown")
+            if not factory_data.empty:
+                # Pivot for heatmap
+                pivot_df = factory_data.pivot_table(
+                    index='FACTORY_LINE_ID',
+                    columns='DETECTED_CLASS',
+                    values='DEFECT_COUNT',
+                    fill_value=0
+                )
+                
+                fig = px.imshow(
+                    pivot_df.values,
+                    labels=dict(x="Defect Type", y="Factory Line", color="Count"),
+                    x=pivot_df.columns.tolist(),
+                    y=pivot_df.index.tolist(),
+                    color_continuous_scale='Blues'
+                )
+                
+                fig.update_layout(
+                    paper_bgcolor='#0f172a',
+                    plot_bgcolor='#0f172a',
+                    font=dict(color='#e2e8f0'),
+                    margin=dict(l=40, r=40, t=40, b=40),
+                    height=400
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No factory line data available")
+        else:
+            # R-CNN: Show confidence distribution instead
+            st.subheader("📊 Confidence Score Distribution")
+            st.info(f"**{model_choice}** doesn't track factory lines. Chart shows top defects by confidence score.")
+            
+            if not defect_summary.empty and 'AVG_CONFIDENCE' in defect_summary.columns:
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=defect_summary['DETECTED_CLASS'],
+                    y=defect_summary['AVG_CONFIDENCE'],
+                    marker_color='#FF9F0A',
+                    text=defect_summary['AVG_CONFIDENCE'].apply(lambda x: f'{x:.2%}' if pd.notna(x) else 'N/A'),
+                    textposition='outside'
+                ))
+                
+                fig.update_layout(
+                    paper_bgcolor='#0f172a',
+                    plot_bgcolor='#0f172a',
+                    font=dict(color='#e2e8f0'),
+                    yaxis=dict(title='Avg Confidence', gridcolor='#334155', tickformat='.0%'),
+                    xaxis=dict(title='Defect Class', gridcolor='#334155'),
+                    margin=dict(l=40, r=40, t=40, b=40),
+                    height=400
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+
+    # Trends chart (YOLO only)
+    if model_type == 'YOLO' and daily_trends is not None:
+        st.subheader("📈 Defect Trends Over Time")
         
-        # Draw box with thicker line
-        for i in range(3):
-            draw.rectangle(
-                [xmin-i, ymin-i, xmax+i, ymax+i], 
-                outline=color
+        if not daily_trends.empty:
+            fig = px.line(
+                daily_trends,
+                x='DETECTION_DATE',
+                y='DEFECT_COUNT',
+                color='DETECTED_CLASS',
+                markers=True
             )
-        
-        # Draw label background
-        label_text = f"{class_name}: {score:.0%}"
-        text_bbox = draw.textbbox((xmin, ymin - 20), label_text)
-        draw.rectangle(text_bbox, fill=color)
-        draw.text((xmin, ymin - 20), label_text, fill="black")
-    
-    return img_copy
-
-def draw_detections_matplotlib(image, detections, score_threshold=0.3, top_k=5):
-    """Draw bounding boxes on image using matplotlib (like original app)."""
-    boxes = detections.get('boxes', [])
-    labels = detections.get('labels', [])
-    scores = detections.get('scores', [])
-    
-    if not scores:
-        return None
-    
-    # Get top k predictions
-    data = pd.DataFrame({'box': boxes, 'label': labels, 'score': scores})
-    top_data = data.nlargest(top_k, 'score')
-    
-    top_boxes = top_data['box'].tolist()
-    top_labels = top_data['label'].tolist()
-    top_scores = top_data['score'].tolist()
-    
-    # Setup the plot
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(np.array(image))
-    
-    # Plot each bounding box
-    for label, box, score in zip(top_labels, top_boxes, top_scores):
-        if score < score_threshold or label == 0:
-            continue
             
-        xmin, ymin, xmax, ymax = box
-        class_label = CLASS_NAMES.get(label, "unknown")
-        
-        # Create rectangle patch
-        rect = patches.Rectangle(
-            (xmin, ymin), xmax - xmin, ymax - ymin,
-            linewidth=2, edgecolor='red', facecolor='none'
-        )
-        ax.text(
-            xmin, ymin, f"{class_label}: {score:.2f}",
-            verticalalignment='top', color='red',
-            fontsize=10, weight='bold',
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
-        )
-        ax.add_patch(rect)
-    
-    plt.axis('off')
-    return fig
+            fig.update_layout(
+                paper_bgcolor='#0f172a',
+                plot_bgcolor='#0f172a',
+                font=dict(color='#e2e8f0'),
+                xaxis=dict(title='Date', gridcolor='#334155'),
+                yaxis=dict(title='Defect Count', gridcolor='#334155'),
+                legend=dict(title='Defect Class'),
+                margin=dict(l=40, r=40, t=40, b=40),
+                height=350
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No trend data available yet. Run the notebook to generate defect logs.")
+    elif model_type == 'R-CNN':
+        st.info(f"⏱️ **{model_choice}** doesn't track timestamps. Use YOLOv12 for trend analysis.")
 
-def save_detection_results(image_b64, detections, filename="uploaded"):
-    """Save detection results to Snowflake table."""
-    try:
-        boxes = detections.get('boxes', [])
-        labels = detections.get('labels', [])
-        scores = detections.get('scores', [])
-        
-        rows = []
-        for i, (box, label, score) in enumerate(zip(boxes[:5], labels[:5], scores[:5])):
-            # Use lowercase keys to match notebook table schema
-            rows.append({
-                'image_data': image_b64,
-                'output': json.dumps(detections),
-                'label': int(label),
-                'box': box,
-                'score': float(score)
-            })
-        
-        if rows:
-            df = session.create_dataframe(rows)
-            df.write.mode("append").save_as_table("DETECTION_OUTPUTS")
-            return True
-    except Exception as e:
-        st.warning(f"Could not save results: {e}")
-    return False
-
-# ============================================================================
-# Service Status
-# ============================================================================
-service_ready = check_service_status()
-if service_ready:
-    st.success(f"✅ Inference Service `{SERVICE_NAME}` is running")
 else:
-    st.warning(f"⚠️ Service `{SERVICE_NAME}` may not be ready. Run the notebook to deploy the model first.")
-
-# ============================================================================
-# Sidebar
-# ============================================================================
-with st.sidebar:
-    st.image("assets/snowflake_logo.png", width=80)
-    st.header("⚙️ Settings")
-    
-    score_threshold = st.slider(
-        "Confidence Threshold",
-        min_value=0.1,
-        max_value=0.99,
-        value=0.7,
-        step=0.05,
-        help="Minimum confidence score for detections (default 70%)"
-    )
-    
-    top_k = st.slider(
-        "Max Detections",
-        min_value=1,
-        max_value=10,
-        value=5,
-        help="Maximum number of detections to show"
-    )
-    
-    st.markdown("---")
-    st.header("📊 Defect Classes")
-    st.markdown("""
-    The model detects 6 types of PCB defects:
-    """)
-    for class_id, class_name in CLASS_NAMES.items():
-        if class_id > 0:
-            color = CLASS_COLORS.get(class_id, "#FFFFFF")
-            st.markdown(
-                f"<span style='color:{color}; font-size: 20px;'>●</span> **{class_name}**", 
-                unsafe_allow_html=True
-            )
-    
-    st.markdown("---")
-    st.caption(f"Model: `{MODEL_NAME}` v{MODEL_VERSION}")
-    st.caption(f"Service: `{SERVICE_NAME}`")
-
-# ============================================================================
-# Main Content - Tabs
-# ============================================================================
-tab1, tab2, tab3 = st.tabs(["🎯 Quick Demo", "🗃️ Test Dataset", "📈 Results History"])
-
-# ----------------------------------------------------------------------------
-# Tab 1: Sample Image Detection
-# ----------------------------------------------------------------------------
-with tab1:
-    st.subheader("Quick Demo: Detect Defects in Sample Image")
+    st.info(f"📭 No defect data available for **{model_choice}**. Run the corresponding notebook to generate results.")
     
     st.markdown("""
-    Run defect detection on a sample PCB image from the test dataset.
-    For custom images, use the **Test Dataset** tab to select from available images.
+    ### Getting Started
+    
+    **For YOLOv12:**
+    1. Run `TRAIN_PCB_DEFECT_MODEL_YOLO` notebook
+    2. Results saved to `DEFECT_LOGS` table
+    3. Refresh this dashboard
+    
+    **For Faster R-CNN:**
+    1. Run `TRAIN_PCB_DEFECT_MODEL` notebook
+    2. Results saved to `DETECTION_OUTPUTS` table
+    3. Refresh this dashboard
     """)
-    
-    # Get a random sample from test data
-    try:
-        sample_df = session.sql("SELECT * FROM TEST_DATA ORDER BY RANDOM() LIMIT 1").to_pandas()
-        
-        if len(sample_df) > 0:
-            row = sample_df.iloc[0]
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**:green[Sample PCB Image]**")
-                image_data = base64.b64decode(row['IMAGE_DATA'])
-                image = Image.open(io.BytesIO(image_data)).convert("RGB")
-                st.image(image, use_container_width=True)
-                
-                st.markdown(f"""
-                **Ground Truth:**
-                - **Defect:** `{CLASS_NAMES.get(int(row['CLASS']), 'unknown')}`
-                - **Location:** ({row['XMIN']:.0f}, {row['YMIN']:.0f}) → ({row['XMAX']:.0f}, {row['YMAX']:.0f})
-                """)
-            
-            if st.button("🔍 Detect Defects", type="primary", key="sample_detect"):
-                with st.spinner("Running inference using custom trained RCNN Object Detection PyTorch Model..."):
-                    result = run_inference(row['IMAGE_DATA'])
-                    
-                    if result is not None and len(result) > 0:
-                        output_str = result.iloc[0]['output']
-                        detections = json.loads(output_str)
-                        
-                        with col2:
-                            st.markdown("**:green[Detected Defects]**")
-                            fig = draw_detections_matplotlib(image, detections, score_threshold, top_k)
-                            if fig:
-                                st.pyplot(fig)
-                                plt.close(fig)
-                        
-                        # Show detection details
-                        st.markdown("---")
-                        st.subheader("Detection Details")
-                        
-                        detection_data = []
-                        for i, (box, label, score) in enumerate(zip(
-                            detections.get('boxes', [])[:top_k],
-                            detections.get('labels', [])[:top_k],
-                            detections.get('scores', [])[:top_k]
-                        )):
-                            if score >= score_threshold and label > 0:
-                                detection_data.append({
-                                    "#": i + 1,
-                                    "Defect": CLASS_NAMES.get(label, "unknown"),
-                                    "Confidence": f"{score:.1%}",
-                                    "Box": f"({box[0]:.0f}, {box[1]:.0f}) → ({box[2]:.0f}, {box[3]:.0f})"
-                                })
-                        
-                        if detection_data:
-                            st.dataframe(
-                                pd.DataFrame(detection_data), 
-                                use_container_width=True,
-                                hide_index=True
-                            )
-                            
-                            # Save results
-                            if save_detection_results(row['IMAGE_DATA'], detections, row['FILENAME']):
-                                st.success("✓ Results saved to DETECTION_OUTPUTS table")
-                        else:
-                            st.info("No defects detected above the confidence threshold")
-            
-            if st.button("🔄 Load Different Sample", key="refresh_sample"):
-                st.rerun()
-        else:
-            st.warning("No test data found. Run `CALL LOAD_DEEPPCB_DATA()` first.")
-    except Exception as e:
-        st.error(f"Error loading sample: {str(e)}")
 
-# ----------------------------------------------------------------------------
-# Tab 2: Test Dataset
-# ----------------------------------------------------------------------------
-with tab2:
-    st.subheader("Test Dataset Samples")
-    
-    try:
-        # Get balanced sample across all defect types (more from common classes)
-        test_df = session.sql("""
-            (SELECT * FROM TEST_DATA WHERE CLASS = 1 LIMIT 10)
-            UNION ALL
-            (SELECT * FROM TEST_DATA WHERE CLASS = 2 LIMIT 5)
-            UNION ALL
-            (SELECT * FROM TEST_DATA WHERE CLASS = 3 LIMIT 10)
-            UNION ALL
-            (SELECT * FROM TEST_DATA WHERE CLASS = 4 LIMIT 5)
-            UNION ALL
-            (SELECT * FROM TEST_DATA WHERE CLASS = 5 LIMIT 5)
-            UNION ALL
-            (SELECT * FROM TEST_DATA WHERE CLASS = 6 LIMIT 5)
-        """).to_pandas()
-        
-        if len(test_df) > 0:
-            selected_idx = st.selectbox(
-                "Select a test image",
-                range(len(test_df)),
-                format_func=lambda x: f"Image {x+1}: {test_df.iloc[x]['FILENAME']} ({CLASS_NAMES.get(int(test_df.iloc[x]['CLASS']), 'unknown')})"
-            )
-            
-            row = test_df.iloc[selected_idx]
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**:green[Test Image]**")
-                image_data = base64.b64decode(row['IMAGE_DATA'])
-                image = Image.open(io.BytesIO(image_data)).convert("RGB")
-                st.image(image, use_container_width=True)
-                
-                st.markdown(f"""
-                **Ground Truth:**
-                - **Defect:** `{CLASS_NAMES.get(int(row['CLASS']), 'unknown')}`
-                - **Box:** ({row['XMIN']:.0f}, {row['YMIN']:.0f}) → ({row['XMAX']:.0f}, {row['YMAX']:.0f})
-                """)
-            
-            if st.button("🔍 Run Detection", type="primary", key="test_detect"):
-                with st.spinner("Running SPCS inference..."):
-                    result = run_inference(row['IMAGE_DATA'])
-                    
-                    if result is not None and len(result) > 0:
-                        output_str = result.iloc[0]['output']
-                        detections = json.loads(output_str)
-                        
-                        with col2:
-                            st.markdown("**:green[Predicted Defects]**")
-                            fig = draw_detections_matplotlib(image, detections, score_threshold, top_k)
-                            if fig:
-                                st.pyplot(fig)
-                                plt.close(fig)
-                            
-                            # Show prediction summary
-                            pred_labels = [l for l, s in zip(
-                                detections.get('labels', []),
-                                detections.get('scores', [])
-                            ) if s >= score_threshold and l > 0]
-                            
-                            if pred_labels:
-                                pred_classes = [CLASS_NAMES.get(l, "unknown") for l in pred_labels[:3]]
-                                st.markdown(f"**Predictions:** {', '.join(pred_classes)}")
-                        
-                        # Save results to database
-                        if save_detection_results(row['IMAGE_DATA'], detections, row['FILENAME']):
-                            st.success("✓ Results saved to DETECTION_OUTPUTS table")
-        else:
-            st.warning("No test data found. Run `CALL LOAD_DEEPPCB_DATA()` first.")
-    except Exception as e:
-        st.error(f"Error loading test data: {str(e)}")
+# =============================================================================
+# FOOTER
+# =============================================================================
 
-# ----------------------------------------------------------------------------
-# Tab 3: Results History
-# ----------------------------------------------------------------------------
-with tab3:
-    st.subheader("Detection Results History")
-    
-    try:
-        # Query with lowercase column names (notebook creates lowercase)
-        results_df = session.sql("""
-            SELECT 
-                "label" as LABEL,
-                "score" as SCORE,
-                "box" as BOX
-            FROM DETECTION_OUTPUTS 
-            WHERE "score" IS NOT NULL
-            ORDER BY "score" DESC
-            LIMIT 50
-        """).to_pandas()
-        
-        if len(results_df) > 0:
-            # Add class names
-            results_df['Defect'] = results_df['LABEL'].apply(
-                lambda x: CLASS_NAMES.get(int(x), "unknown") if pd.notna(x) else "unknown"
-            )
-            results_df['Confidence'] = results_df['SCORE'].apply(
-                lambda x: f"{x:.1%}" if pd.notna(x) else "N/A"
-            )
-            
-            st.dataframe(
-                results_df[['Defect', 'Confidence', 'BOX']],
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Summary stats
-            st.markdown("---")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Detections", len(results_df))
-            with col2:
-                avg_conf = results_df['SCORE'].mean()
-                st.metric("Avg Confidence", f"{avg_conf:.1%}" if pd.notna(avg_conf) else "N/A")
-            with col3:
-                unique_defects = results_df['Defect'].nunique()
-                st.metric("Defect Types", unique_defects)
-        else:
-            st.info("No detection results yet. Run inference to populate results.")
-    except Exception as e:
-        st.warning(f"Could not load results: {str(e)}")
-
-# ============================================================================
-# Footer
-# ============================================================================
 st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: #666;'>"
-    "Built with Snowflake ML Registry + SPCS | PyTorch Faster R-CNN"
-    "</div>",
-    unsafe_allow_html=True
-)
+st.caption(f"Powered by Snowflake ML Registry + SPCS | {model_choice} Object Detection")
+
